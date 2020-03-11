@@ -1,6 +1,6 @@
 /* Copyright (c) 2001-2004, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 #define ADDRESSMAP_PRIVATE
@@ -12,6 +12,7 @@
 #include "test/log_test_helpers.h"
 #include "lib/net/resolve.h"
 #include "test/rng_test_helpers.h"
+#include "test/resolve_test_helpers.h"
 
 #ifdef HAVE_SYS_UN_H
 #include <sys/un.h>
@@ -51,6 +52,7 @@ test_addr_basic(void *arg)
   ;
 }
 
+#ifndef COCCI
 #define test_op_ip6_(a,op,b,e1,e2)                               \
   STMT_BEGIN                                                     \
   tt_assert_test_fmt_type(a,b,e1" "#op" "e2,struct in6_addr*,    \
@@ -68,6 +70,7 @@ test_addr_basic(void *arg)
     TT_EXIT_TEST_FUNCTION                                        \
   );                                                             \
   STMT_END
+#endif /* !defined(COCCI) */
 
 /** Helper: Assert that two strings both decode as IPv6 addresses with
  * tor_inet_pton(), and both decode to the same address. */
@@ -110,6 +113,7 @@ test_addr_basic(void *arg)
       TT_DIE(("%s was not internal", a));                      \
   STMT_END
 
+#ifndef COCCI
 /** Helper: Assert that <b>a</b> and <b>b</b>, when parsed by
  * tor_inet_pton(), give addresses that compare in the order defined by
  * <b>op</b> with tor_addr_compare(). */
@@ -134,6 +138,7 @@ test_addr_basic(void *arg)
       TT_DIE(("Failed: tor_addr_compare_masked(%s,%s,%d) %s 0", \
               a, b, m, #op));                                   \
   STMT_END
+#endif /* !defined(COCCI) */
 
 /** Helper: assert that <b>xx</b> is parseable as a masked IPv6 address with
  * ports by tor_parse_mask_addr_ports(), with family <b>f</b>, IP address
@@ -654,12 +659,7 @@ test_addr_ip6_helpers(void *arg)
   tt_int_op(tor_addr_family(&t1),OP_EQ,AF_INET);
   tt_int_op(tor_addr_to_ipv4h(&t1),OP_EQ,0x01010202);
   r=tor_addr_parse_mask_ports("3.4.16.032:1-2",0,&t1, &mask, &port1, &port2);
-  tt_int_op(r, OP_EQ, AF_INET);
-  tt_int_op(mask,OP_EQ,32);
-  tt_int_op(tor_addr_family(&t1),OP_EQ,AF_INET);
-  tt_int_op(tor_addr_to_ipv4h(&t1),OP_EQ,0x03041020);
-  tt_uint_op(port1, OP_EQ, 1);
-  tt_uint_op(port2, OP_EQ, 2);
+  tt_int_op(r, OP_EQ, -1);
   r=tor_addr_parse_mask_ports("1.1.2.3/255.255.128.0",0,&t1, &mask,NULL,NULL);
   tt_int_op(r, OP_EQ, AF_INET);
   tt_int_op(mask,OP_EQ,17);
@@ -731,10 +731,6 @@ test_addr_ip6_helpers(void *arg)
 #define TEST_ADDR_PARSE_FMT(addr_str, expect_family, fmt_decorated, \
                             expect_str) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
-    char buf[TOR_ADDR_BUF_LEN]; \
-    const char *sv; \
     r = tor_addr_parse(&addr, addr_str); \
     tt_int_op(r, OP_EQ, expect_family); \
     sv = tor_addr_to_str(buf, &addr, sizeof(buf), fmt_decorated); \
@@ -747,8 +743,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_ADDR_PARSE_XFAIL(addr_str) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
     r = tor_addr_parse(&addr, addr_str); \
     tt_int_op(r, OP_EQ, -1); \
     tt_assert(tor_addr_is_null(&addr)); \
@@ -762,11 +756,6 @@ test_addr_ip6_helpers(void *arg)
 #define TEST_ADDR_PORT_PARSE_FMT(addr_port_str, default_port, expect_family, \
                                  fmt_decorated, expect_str, expect_port) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
-    uint16_t port; \
-    char buf[TOR_ADDR_BUF_LEN]; \
-    const char *sv; \
     r = tor_addr_port_parse(LOG_DEBUG, addr_port_str, &addr, &port, \
                             default_port); \
     tt_int_op(r, OP_EQ, 0); \
@@ -783,9 +772,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_ADDR_PORT_PARSE_XFAIL(addr_port_str, default_port) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
-    uint16_t port; \
     r = tor_addr_port_parse(LOG_DEBUG, addr_port_str, &addr, &port, \
                             default_port); \
     tt_int_op(r, OP_EQ, -1); \
@@ -799,8 +785,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_ADDR_V4_LOOKUP_HOSTNAME(addr_str, expect_str) \
   STMT_BEGIN \
-    int r; \
-    uint32_t addr32h; \
     r = tor_lookup_hostname(addr_str, &addr32h); \
     tt_int_op(r, OP_EQ, 0); \
     tt_str_op(fmt_addr32(addr32h), OP_EQ, expect_str); \
@@ -812,8 +796,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_ADDR_V4_LOOKUP_XFAIL(bad_str) \
   STMT_BEGIN \
-    int r; \
-    uint32_t addr32h; \
     r = tor_lookup_hostname(bad_str, &addr32h); \
     tt_int_op(r, OP_EQ, -1); \
     tt_int_op(addr32h, OP_EQ, 0); \
@@ -828,8 +810,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_HOST_V4_LOOKUP(host_str) \
   STMT_BEGIN \
-    int r; \
-    uint32_t addr32h; \
     r = tor_lookup_hostname(host_str, &addr32h); \
     tt_int_op(r, OP_GE, -1); \
     tt_int_op(r, OP_LE, 1); \
@@ -845,10 +825,6 @@ test_addr_ip6_helpers(void *arg)
 #define TEST_ADDR_LOOKUP_FMT(addr_str, require_family, expect_family, \
                              fmt_decorated, expect_str) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
-    char buf[TOR_ADDR_BUF_LEN]; \
-    const char *sv; \
     r = tor_addr_lookup(addr_str, require_family, &addr); \
     tt_int_op(r, OP_EQ, 0); \
     tt_int_op(tor_addr_family(&addr), OP_EQ, expect_family); \
@@ -863,8 +839,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_ADDR_LOOKUP_XFAIL(bad_str, require_family) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
     r = tor_addr_lookup(bad_str, require_family, &addr); \
     tt_int_op(r, OP_EQ, -1); \
     tt_assert(tor_addr_is_null(&addr)); \
@@ -879,8 +853,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_HOST_LOOKUP(host_str, require_family) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
     r = tor_addr_lookup(host_str, require_family, &addr); \
     tt_int_op(r, OP_GE, -1); \
     tt_int_op(r, OP_LE, 1); \
@@ -897,11 +869,6 @@ test_addr_ip6_helpers(void *arg)
 #define TEST_ADDR_PORT_LOOKUP_FMT(addr_port_str, expect_family, \
                                   fmt_decorated, expect_str, expect_port) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
-    uint16_t port; \
-    char buf[TOR_ADDR_BUF_LEN]; \
-    const char *sv; \
     r = tor_addr_port_lookup(addr_port_str, &addr, &port); \
     tt_int_op(r, OP_EQ, 0); \
     tt_int_op(tor_addr_family(&addr), OP_EQ, expect_family); \
@@ -918,9 +885,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_ADDR_PORT_LOOKUP_XFAIL(bad_str) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
-    uint16_t port; \
     r = tor_addr_port_lookup(bad_str, &addr, &port); \
     tt_int_op(r, OP_EQ, -1); \
     tt_assert(tor_addr_is_null(&addr)); \
@@ -939,9 +903,6 @@ test_addr_ip6_helpers(void *arg)
  */
 #define TEST_HOST_PORT_LOOKUP(host_port_str, expect_success_port) \
   STMT_BEGIN \
-    int r; \
-    tor_addr_t addr; \
-    uint16_t port; \
     r = tor_addr_port_lookup(host_port_str, &addr, &port); \
     tt_int_op(r, OP_GE, -1); \
     tt_int_op(r, OP_LE, 0); \
@@ -1162,10 +1123,16 @@ test_addr_ip6_helpers(void *arg)
     TEST_ADDR_LOOKUP_XFAIL(host_port_str, AF_INET6); \
   STMT_END
 
-/** Test tor_addr_parse() and tor_addr_port_parse(). */
 static void
-test_addr_parse(void *arg)
+test_addr_parse_canonical(void *arg)
 {
+  int r;
+  tor_addr_t addr;
+  uint16_t port;
+  const char *sv;
+  uint32_t addr32h;
+  char buf[TOR_ADDR_BUF_LEN];
+
   (void)arg;
 
   /* Correct calls. */
@@ -1185,6 +1152,25 @@ test_addr_parse(void *arg)
   TEST_ADDR_V6_PARSE_CANONICAL("::", 0);
   TEST_ADDR_V6_PARSE_CANONICAL("2::", 0);
   TEST_ADDR_V6_PARSE_CANONICAL("11:22:33:44:55:66:77:88", 0);
+ done:
+  ;
+}
+
+/** Test tor_addr_parse() and tor_addr_port_parse(). */
+static void
+test_addr_parse(void *arg)
+{
+
+  int r;
+  tor_addr_t addr;
+  uint16_t port;
+  const char *sv;
+  uint32_t addr32h;
+  char buf[TOR_ADDR_BUF_LEN];
+
+  (void)arg;
+
+  mock_hostname_resolver();
 
   /* IPv6-mapped IPv4 addresses. Tor doesn't really use these. */
   TEST_ADDR_V6_PARSE("11:22:33:44:55:66:1.2.3.4", 0,
@@ -1290,7 +1276,7 @@ test_addr_parse(void *arg)
                            "11:22::88",99);
 
  done:
-  ;
+  unmock_hostname_resolver();
 }
 
 static void
@@ -1662,13 +1648,39 @@ test_addr_rfc6598(void *arg)
   ;
 }
 
+#define TEST_ADDR_ATON(a, rv) STMT_BEGIN \
+    struct in_addr addr; \
+    tt_int_op(tor_inet_aton(a, &addr), OP_EQ, rv); \
+  STMT_END;
+
+static void
+test_addr_octal(void *arg)
+{
+  (void)arg;
+
+  /* Test non-octal IP addresses. */
+  TEST_ADDR_ATON("0.1.2.3", 1);
+  TEST_ADDR_ATON("1.0.2.3", 1);
+  TEST_ADDR_ATON("1.2.3.0", 1);
+
+  /* Test octal IP addresses. */
+  TEST_ADDR_ATON("01.1.2.3", 0);
+  TEST_ADDR_ATON("1.02.3.4", 0);
+  TEST_ADDR_ATON("1.2.3.04", 0);
+ done:
+  ;
+}
+
+#ifndef COCCI
 #define ADDR_LEGACY(name)                                               \
   { #name, test_addr_ ## name , 0, NULL, NULL }
+#endif
 
 struct testcase_t addr_tests[] = {
   ADDR_LEGACY(basic),
   ADDR_LEGACY(ip6_helpers),
   ADDR_LEGACY(parse),
+  ADDR_LEGACY(parse_canonical),
   { "virtaddr", test_virtaddrmap, 0, NULL, NULL },
   { "virtaddr_persist", test_virtaddrmap_persist, TT_FORK, NULL, NULL },
   { "localname", test_addr_localname, 0, NULL, NULL },
@@ -1677,5 +1689,6 @@ struct testcase_t addr_tests[] = {
   { "is_loopback", test_addr_is_loopback, 0, NULL, NULL },
   { "make_null", test_addr_make_null, 0, NULL, NULL },
   { "rfc6598", test_addr_rfc6598, 0, NULL, NULL },
+  { "octal", test_addr_octal, 0, NULL, NULL },
   END_OF_TESTCASES
 };

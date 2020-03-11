@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2019, The Tor Project, Inc. */
+/* Copyright (c) 2016-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -28,6 +28,8 @@ struct smartlist_t;
 #define PROTOVER_HS_INTRO_V3 4
 /** The protover version number that signifies HSv3 rendezvous point support */
 #define PROTOVER_HS_RENDEZVOUS_POINT_V3 2
+/** The protover that signals support for HS circuit setup padding machines */
+#define PROTOVER_HS_SETUP_PADDING 2
 
 /** List of recognized subprotocols. */
 /// C_RUST_COUPLED: src/rust/protover/ffi.rs `translate_to_rust`

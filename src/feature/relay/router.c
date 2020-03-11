@@ -1,7 +1,7 @@
 /* Copyright (c) 2001 Matej Pfajfar.
  * Copyright (c) 2001-2004, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 #define ROUTER_PRIVATE
@@ -35,6 +35,7 @@
 #include "feature/nodelist/routerlist.h"
 #include "feature/nodelist/torcert.h"
 #include "feature/relay/dns.h"
+#include "feature/relay/relay_config.h"
 #include "feature/relay/router.h"
 #include "feature/relay/routerkeys.h"
 #include "feature/relay/routermode.h"
@@ -284,19 +285,17 @@ construct_ntor_key_map(void)
 {
   di_digest256_map_t *m = NULL;
 
-  if (!fast_mem_is_zero((const char*)
-                       curve25519_onion_key.pubkey.public_key,
-                       CURVE25519_PUBKEY_LEN)) {
-    dimap_add_entry(&m,
-                    curve25519_onion_key.pubkey.public_key,
+  const uint8_t *cur_pk = curve25519_onion_key.pubkey.public_key;
+  const uint8_t *last_pk = last_curve25519_onion_key.pubkey.public_key;
+
+  if (!fast_mem_is_zero((const char *)cur_pk, CURVE25519_PUBKEY_LEN)) {
+    dimap_add_entry(&m, cur_pk,
                     tor_memdup(&curve25519_onion_key,
                                sizeof(curve25519_keypair_t)));
   }
-  if (!fast_mem_is_zero((const char*)
-                          last_curve25519_onion_key.pubkey.public_key,
-                       CURVE25519_PUBKEY_LEN)) {
-    dimap_add_entry(&m,
-                    last_curve25519_onion_key.pubkey.public_key,
+  if (!fast_mem_is_zero((const char*)last_pk, CURVE25519_PUBKEY_LEN) &&
+      tor_memneq(cur_pk, last_pk, CURVE25519_PUBKEY_LEN)) {
+    dimap_add_entry(&m, last_pk,
                     tor_memdup(&last_curve25519_onion_key,
                                sizeof(curve25519_keypair_t)));
   }
@@ -374,6 +373,8 @@ assert_identity_keys_ok(void)
   }
 }
 
+#ifdef HAVE_MODULE_RELAY
+
 /** Returns the current server identity key; requires that the key has
  * been set, and that we are running as a Tor server.
  */
@@ -385,6 +386,8 @@ get_server_identity_key,(void))
   assert_identity_keys_ok();
   return server_identitykey;
 }
+
+#endif /* defined(HAVE_MODULE_RELAY) */
 
 /** Return true iff we are a server and the server identity key
  * has been set. */
@@ -884,15 +887,6 @@ init_keys_common(void)
   if (!key_lock)
     key_lock = tor_mutex_new();
 
-  /* There are a couple of paths that put us here before we've asked
-   * openssl to initialize itself. */
-  if (crypto_global_init(get_options()->HardwareAccel,
-                         get_options()->AccelName,
-                         get_options()->AccelDir)) {
-    log_err(LD_BUG, "Unable to initialize OpenSSL. Exiting.");
-    return -1;
-  }
-
   return 0;
 }
 
@@ -1080,8 +1074,10 @@ init_keys(void)
   if (authdir_mode_v3(options)) {
     const char *m = NULL;
     routerinfo_t *ri;
-    /* We need to add our own fingerprint so it gets recognized. */
-    if (dirserv_add_own_fingerprint(get_server_identity_key())) {
+    /* We need to add our own fingerprint and ed25519 key so it gets
+     * recognized. */
+    if (dirserv_add_own_fingerprint(get_server_identity_key(),
+                                    get_master_identity_key())) {
       log_err(LD_GENERAL,"Error adding own fingerprint to set of relays");
       return -1;
     }
@@ -1220,7 +1216,7 @@ router_should_be_dirserver(const or_options_t *options, int dir_port)
      * much larger effect on output than input so there is no reason to turn it
      * off if using AccountingRule in. */
     int interval_length = accounting_get_interval_length();
-    uint32_t effective_bw = get_effective_bwrate(options);
+    uint32_t effective_bw = relay_get_effective_bwrate(options);
     uint64_t acc_bytes;
     if (!interval_length) {
       log_warn(LD_BUG, "An accounting interval is not allowed to be zero "
@@ -1402,7 +1398,7 @@ consider_publishable_server(int force)
 }
 
 /** Return the port of the first active listener of type
- *  <b>listener_type</b>. */
+ *  <b>listener_type</b>. Returns 0 if no port is found. */
 /** XXX not a very good interface. it's not reliable when there are
     multiple listeners. */
 uint16_t
@@ -1424,8 +1420,7 @@ router_get_active_listener_port_by_type_af(int listener_type,
 
 /** Return the port that we should advertise as our ORPort; this is either
  * the one configured in the ORPort option, or the one we actually bound to
- * if ORPort is "auto".
- */
+ * if ORPort is "auto". Returns 0 if no port is found. */
 uint16_t
 router_get_advertised_or_port(const or_options_t *options)
 {
@@ -2039,10 +2034,10 @@ router_build_fresh_unsigned_routerinfo,(routerinfo_t **ri_out))
   ri->protocol_list = tor_strdup(protover_get_supported_protocols());
 
   /* compute ri->bandwidthrate as the min of various options */
-  ri->bandwidthrate = get_effective_bwrate(options);
+  ri->bandwidthrate = relay_get_effective_bwrate(options);
 
   /* and compute ri->bandwidthburst similarly */
-  ri->bandwidthburst = get_effective_bwburst(options);
+  ri->bandwidthburst = relay_get_effective_bwburst(options);
 
   /* Report bandwidth, unless we're hibernating or shutting down */
   ri->bandwidthcapacity = hibernating ? 0 : rep_hist_bandwidth_assess();
@@ -2913,15 +2908,20 @@ router_dump_router_to_string(routerinfo_t *router,
   }
 
   if (options->BridgeRelay) {
-    const char *bd;
+    char *bd = NULL;
+
     if (options->BridgeDistribution && strlen(options->BridgeDistribution)) {
-      bd = options->BridgeDistribution;
+      bd = tor_strdup(options->BridgeDistribution);
     } else {
-      bd = "any";
+      bd = tor_strdup("any");
     }
-    if (strchr(bd, '\n') || strchr(bd, '\r'))
-      bd = escaped(bd);
+
+    // Make sure our value is lowercased in the descriptor instead of just
+    // forwarding what the user wrote in their torrc directly.
+    tor_strlower(bd);
+
     smartlist_add_asprintf(chunks, "bridge-distribution-request %s\n", bd);
+    tor_free(bd);
   }
 
   if (router->onion_curve25519_pkey) {
@@ -3158,6 +3158,8 @@ extrainfo_dump_to_string_header_helper(
     ed_cert_line = tor_strdup("");
   }
 
+  /* This is the first chunk in the file. If the file is too big, other chunks
+   * are removed. So we must only add one chunk here. */
   tor_asprintf(&pre, "extra-info %s %s\n%spublished %s\n",
                extrainfo->nickname, identity,
                ed_cert_line,
@@ -3186,6 +3188,10 @@ extrainfo_dump_to_string_stats_helper(smartlist_t *chunks,
   const or_options_t *options = get_options();
   char *contents = NULL;
   time_t now = time(NULL);
+
+  /* If the file is too big, these chunks are removed, starting with the last
+   * chunk. So each chunk must be a complete line, and the file must be valid
+   * after each chunk. */
 
   /* Add information about the pluggable transports we support, even if we
    * are not publishing statistics. This information is needed by BridgeDB
@@ -3269,6 +3275,8 @@ extrainfo_dump_to_string_ed_sig_helper(
   char buf[ED25519_SIG_BASE64_LEN+1];
   int rv = -1;
 
+  /* These are two of the three final chunks in the file. If the file is too
+   * big, other chunks are removed. So we must only add two chunks here. */
   smartlist_add_strdup(chunks, "router-sig-ed25519 ");
   crypto_digest_smartlist_prefix(sha256_digest, DIGEST256_LEN,
                                  ED_DESC_SIGNATURE_PREFIX,
@@ -3362,17 +3370,21 @@ extrainfo_dump_to_string(char **s_out, extrainfo_t *extrainfo,
       goto err;
   }
 
+  /* This is one of the three final chunks in the file. If the file is too big,
+   * other chunks are removed. So we must only add one chunk here. */
   smartlist_add_strdup(chunks, "router-signature\n");
   s = smartlist_join_strings(chunks, "", 0, NULL);
 
   while (strlen(s) > MAX_EXTRAINFO_UPLOAD_SIZE - DIROBJ_MAX_SIG_LEN) {
     /* So long as there are at least two chunks (one for the initial
      * extra-info line and one for the router-signature), we can keep removing
-     * things. */
-    if (smartlist_len(chunks) > 2) {
-      /* We remove the next-to-last element (remember, len-1 is the last
-         element), since we need to keep the router-signature element. */
-      int idx = smartlist_len(chunks) - 2;
+     * things. If emit_ed_sigs is true, we also keep 2 additional chunks at the
+     * end for the ed25519 signature. */
+    const int required_chunks = emit_ed_sigs ? 4 : 2;
+    if (smartlist_len(chunks) > required_chunks) {
+      /* We remove the next-to-last or 4th-last element (remember, len-1 is the
+       * last element), since we need to keep the router-signature elements. */
+      int idx = smartlist_len(chunks) - required_chunks;
       char *e = smartlist_get(chunks, idx);
       smartlist_del_keeporder(chunks, idx);
       log_warn(LD_GENERAL, "We just generated an extra-info descriptor "
@@ -3453,6 +3465,10 @@ router_free_all(void)
   crypto_pk_free(server_identitykey);
   crypto_pk_free(client_identitykey);
 
+  /* Destroying a locked mutex is undefined behaviour. This mutex may be
+   * locked, because multiple threads can access it. But we need to destroy
+   * it, otherwise re-initialisation will trigger undefined behaviour.
+   * See #31735 for details. */
   tor_mutex_free(key_lock);
   routerinfo_free(desc_routerinfo);
   extrainfo_free(desc_extrainfo);

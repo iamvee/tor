@@ -1,7 +1,7 @@
 /* Copyright (c) 2001, Matej Pfajfar.
  * Copyright (c) 2001-2004, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -25,12 +25,12 @@
 
 #include "lib/crypt_ops/crypto_openssl_mgt.h"
 
-DISABLE_GCC_WARNING(redundant-decls)
+DISABLE_GCC_WARNING("-Wredundant-decls")
 
 #include <openssl/hmac.h>
 #include <openssl/sha.h>
 
-ENABLE_GCC_WARNING(redundant-decls)
+ENABLE_GCC_WARNING("-Wredundant-decls")
 
 /* Crypto digest functions */
 
@@ -147,9 +147,9 @@ crypto_digest_get_algorithm(crypto_digest_t *digest)
 static size_t
 crypto_digest_alloc_bytes(digest_algorithm_t alg)
 {
-  /* Helper: returns the number of bytes in the 'f' field of 'st' */
+  /** Helper: returns the number of bytes in the 'f' field of 'st' */
 #define STRUCT_FIELD_SIZE(st, f) (sizeof( ((st*)0)->f ))
-  /* Gives the length of crypto_digest_t through the end of the field 'd' */
+  /** Gives the length of crypto_digest_t through the end of the field 'd' */
 #define END_OF_FIELD(f) (offsetof(crypto_digest_t, f) + \
                          STRUCT_FIELD_SIZE(crypto_digest_t, f))
   switch (alg) {
@@ -212,7 +212,7 @@ crypto_digest_new_internal(digest_algorithm_t algorithm)
         return NULL;
       }
       break;
-#else /* !(defined(OPENSSL_HAS_SHA3)) */
+#else /* !defined(OPENSSL_HAS_SHA3) */
     case DIGEST_SHA3_256:
       keccak_digest_init(&r->d.sha3, 256);
       break;
@@ -310,7 +310,7 @@ crypto_digest_add_bytes(crypto_digest_t *digest, const char *data,
       tor_assert(r);
   }
       break;
-#else /* !(defined(OPENSSL_HAS_SHA3)) */
+#else /* !defined(OPENSSL_HAS_SHA3) */
     case DIGEST_SHA3_256: /* FALLSTHROUGH */
     case DIGEST_SHA3_512:
       keccak_digest_update(&digest->d.sha3, (const uint8_t *)data, len);
@@ -354,7 +354,7 @@ crypto_digest_get_digest(crypto_digest_t *digest,
     EVP_MD_CTX_free(tmp);
     tor_assert(res == 1);
     goto done;
-#else /* !(defined(OPENSSL_HAS_SHA3)) */
+#else /* !defined(OPENSSL_HAS_SHA3) */
     /* Tiny-Keccak handles copying into a temporary ctx, and also can handle
      * short output buffers by truncating appropriately. */
     keccak_digest_sum(&digest->d.sha3, (uint8_t *)out, out_len);
@@ -519,4 +519,3 @@ crypto_hmac_sha256(char *hmac_out,
             (unsigned char*)hmac_out, NULL);
   tor_assert(rv);
 }
-

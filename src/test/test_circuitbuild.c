@@ -1,6 +1,6 @@
 /* Copyright (c) 2001-2004, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 #define CIRCUITBUILD_PRIVATE
@@ -167,6 +167,7 @@ test_upgrade_from_guard_wait(void *arg)
   tt_assert(!list);
 
  done:
+  smartlist_free(list);
   circuit_free(circ);
   entry_guard_free_(guard);
 }

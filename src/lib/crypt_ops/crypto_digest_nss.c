@@ -1,7 +1,7 @@
 /* Copyright (c) 2001, Matej Pfajfar.
  * Copyright (c) 2001-2004, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -23,9 +23,9 @@
 
 #include "lib/arch/bytes.h"
 
-DISABLE_GCC_WARNING(strict-prototypes)
+DISABLE_GCC_WARNING("-Wstrict-prototypes")
 #include <pk11pub.h>
-ENABLE_GCC_WARNING(strict-prototypes)
+ENABLE_GCC_WARNING("-Wstrict-prototypes")
 
 /**
  * Convert a digest_algorithm_t (used by tor) to a HashType (used by NSS).
@@ -44,7 +44,11 @@ digest_alg_to_nss_oid(digest_algorithm_t alg)
   }
 }
 
-/* Helper: get an unkeyed digest via pk11wrap */
+/** Helper: Compute an unkeyed digest of the <b>msg_len</b> bytes at
+ * <b>msg</b>, using the digest algorithm specified by <b>alg</b>.
+ * Store the result in the <b>len_out</b>-byte buffer at <b>digest</b>.
+ * Return the number of bytes written on success, and -1 on failure.
+ **/
 static int
 digest_nss_internal(SECOidTag alg,
                     char *digest, unsigned len_out,
@@ -557,4 +561,3 @@ crypto_hmac_sha256(char *hmac_out,
 
   tor_assert(ok);
 }
-

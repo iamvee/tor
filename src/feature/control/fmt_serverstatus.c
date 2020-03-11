@@ -1,7 +1,12 @@
 /* Copyright (c) 2001-2004, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
+
+/**
+ * @file fmt_serverstatus.c
+ * @brief Format relay info for a controller.
+ **/
 
 #include "core/or/or.h"
 #include "feature/control/fmt_serverstatus.h"
@@ -9,8 +14,8 @@
 #include "app/config/config.h"
 #include "feature/dirauth/authmode.h"
 #include "feature/dirauth/voteflags.h"// XXXX remove
+#include "feature/nodelist/describe.h"
 #include "feature/nodelist/nodelist.h"
-#include "feature/nodelist/routerinfo.h"
 
 #include "feature/nodelist/node_st.h"
 #include "feature/nodelist/routerinfo_st.h"

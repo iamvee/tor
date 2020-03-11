@@ -6,8 +6,8 @@ clone_depth: 50
 # But we compile using MinGW, not Visual Studio.
 # We use these images because they have different Windows versions.
 image:
-  # Windows Server 2016
-  - Visual Studio 2017
+  # Windows Server 2019
+  - Visual Studio 2019
   # Windows Server 2012 R2
   - Visual Studio 2015
 
@@ -28,11 +28,11 @@ environment:
 matrix:
   # Don't keep building failing jobs
   fast_finish: true
-  # Skip the 32-bit Windows Server 2016 job, and the 64-bit Windows Server
+  # Skip the 32-bit Windows Server 2019 job, and the 64-bit Windows Server
   # 2012 R2 job, to speed up the build.
   # The environment variables must be listed without the 'environment' tag.
   exclude:
-    - image: Visual Studio 2017
+    - image: Visual Studio 2019
       target: i686-w64-mingw32
       compiler_path: mingw32
       mingw_prefix: mingw-w64-i686
@@ -62,7 +62,7 @@ install:
      #
      # Use pacman --debug to show package downloads and install locations
      #>
-    Execute-Command "C:\msys64\usr\bin\pacman" -Sy --verbose --needed --noconfirm ${env:mingw_prefix}-libevent ${env:mingw_prefix}-pkg-config ${env:mingw_prefix}-xz ${env:mingw_prefix}-zstd ;
+    Execute-Command "C:\msys64\usr\bin\pacman" -Sy --verbose --needed --noconfirm ${env:mingw_prefix}-libevent ${env:mingw_prefix}-openssl ${env:mingw_prefix}-pkg-config ${env:mingw_prefix}-xz ${env:mingw_prefix}-zstd ;
 
 build_script:
 - ps: >-
@@ -83,8 +83,8 @@ build_script:
              # configure its flags. liblzma just works.
              #>
             Execute-Bash "ZSTD_CFLAGS='-L/${env:compiler_path}/include' ZSTD_LIBS='-L/${env:compiler_path}/lib -lzstd' ../configure --prefix=/${env:compiler_path} --build=${env:target} --host=${env:target} --with-openssl-dir=/${env:compiler_path} --disable-asciidoc --enable-fatal-warnings ${env:hardening}"
-            Execute-Bash "V=1 make -j2"
-            Execute-Bash "V=1 make -j2 install"
+            Execute-Bash "V=1 make -k -j2"
+            Execute-Bash "V=1 make -k -j2 install"
      }
 
 test_script:
@@ -97,11 +97,23 @@ test_script:
             Set-Location "${env:build}"
             Copy-Item "C:/msys64/${env:compiler_path}/bin/libssp-0.dll" -Destination "${env:build}/src/test"
             Copy-Item "C:/msys64/${env:compiler_path}/bin/zlib1.dll" -Destination "${env:build}/src/test"
-            Execute-Bash "VERBOSE=1 make -j2 check"
+            Execute-Bash "VERBOSE=1 make -k -j2 check"
     }
 
 on_finish:
 - ps: >-
+    <# if we failed before install:, these functions won't be defined #>
+    Function Execute-Command ($commandPath)
+    {
+        & $commandPath $args 2>&1
+        if ( $LastExitCode -ne 0 ) {
+            $host.SetShouldExit( $LastExitCode )
+        }
+    }
+    Function Execute-Bash ()
+    {
+        Execute-Command 'c:\msys64\usr\bin\bash' '-e' '-c' $args
+    }
     if ($env:compiler -eq "mingw") {
             <# use the MSYS2 user binaries to archive failures #>
             $oldpath = ${env:Path} -split ';'

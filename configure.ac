@@ -4,9 +4,11 @@ dnl Copyright (c) 2007-2019, The Tor Project, Inc.
 dnl See LICENSE for licensing information
 
 AC_PREREQ([2.63])
-AC_INIT([tor],[0.4.2.0-alpha-dev])
+AC_INIT([tor],[0.4.4.0-alpha-dev])
 AC_CONFIG_SRCDIR([src/app/main/tor_main.c])
 AC_CONFIG_MACRO_DIR([m4])
+
+configure_flags="$*"
 
 # DO NOT EDIT THIS DEFINITION BY HAND UNLESS YOU KNOW WHAT YOU'RE DOING.
 #
@@ -14,7 +16,7 @@ AC_CONFIG_MACRO_DIR([m4])
 # version number changes.  Tor uses it to make sure that it
 # only shuts down for missing "required protocols" when those protocols
 # are listed as required by a consensus after this date.
-AC_DEFINE(APPROX_RELEASE_DATE, ["2019-06-10"], # for 0.4.2.0-alpha-dev
+AC_DEFINE(APPROX_RELEASE_DATE, ["2020-02-11"], # for 0.4.4.0-alpha-dev
           [Approximate date when this software was released. (Updated when the version changes.)])
 
 # "foreign" means we don't follow GNU package layout standards
@@ -29,6 +31,18 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_CANONICAL_HOST
 
 PKG_PROG_PKG_CONFIG
+if test "x$PKG_CONFIG" = "x" ; then
+    pkg_config_user_action="install pkg-config, and check the PKG_CONFIG_PATH environment variable"
+    AC_MSG_NOTICE([Some libraries need pkg-config, including systemd, nss, lzma, zstd, and custom mallocs.])
+    AC_MSG_NOTICE([To use those libraries, $pkg_config_user_action.])
+else
+    pkg_config_user_action="check the PKG_CONFIG_PATH environment variable"
+fi
+
+if test "x$PKG_CONFIG_PATH" = "x" && test "x$prefix" != "xNONE" && test "$host" != "$build"; then
+   export PKG_CONFIG_PATH=$prefix/lib/pkgconfig
+   AC_MSG_NOTICE([set PKG_CONFIG_PATH=$PKG_CONFIG_PATH to support cross-compiling])
+fi
 
 AC_ARG_ENABLE(openbsd-malloc,
    AS_HELP_STRING(--enable-openbsd-malloc, [use malloc code from OpenBSD.  Linux only. Deprecated: see --with-malloc]))
@@ -66,6 +80,24 @@ AC_ARG_ENABLE(nss,
    AS_HELP_STRING(--enable-nss, [Use Mozilla's NSS TLS library. (EXPERIMENTAL)]))
 AC_ARG_ENABLE(pic,
    AS_HELP_STRING(--enable-pic, [Build Tor's binaries as position-independent code, suitable to link as a library.]))
+
+AC_ARG_ENABLE(missing-doc-warnings,
+   AS_HELP_STRING(--enable-missing-doc-warnings, [Tell doxygen to warn about missing documentation. Makes doxygen warnings nonfatal.]))
+
+if test "$enable_missing_doc_warnings" = "yes"; then
+   DOXYGEN_FATAL_WARNINGS=NO
+   DOXYGEN_WARN_ON_MISSING=YES
+elif test "$enable_fatal_warnings" = "yes"; then
+   # Fatal warnings from doxygen are nice, but not if we're warning about
+   # missing documentation.
+   DOXYGEN_FATAL_WARNINGS=YES
+   DOXYGEN_WARN_ON_MISSING=NO
+else
+   DOXYGEN_FATAL_WARNINGS=NO
+   DOXYGEN_WARN_ON_MISSING=NO
+fi
+AC_SUBST(DOXYGEN_FATAL_WARNINGS)
+AC_SUBST(DOXYGEN_WARN_ON_MISSING)
 
 if test "x$enable_coverage" != "xyes" -a "x$enable_asserts_in_tests" = "xno" ; then
     AC_MSG_ERROR([Can't disable assertions outside of coverage build])
@@ -160,13 +192,13 @@ if test "x$have_systemd" = "xyes"; then
     TOR_SYSTEMD_CFLAGS="${SYSTEMD_CFLAGS}"
     TOR_SYSTEMD_LIBS="${SYSTEMD_LIBS}"
     PKG_CHECK_MODULES(LIBSYSTEMD209, [libsystemd >= 209],
-         [AC_DEFINE(HAVE_SYSTEMD_209,1,[Have systemd v209 or more])], [])
+         [AC_DEFINE(HAVE_SYSTEMD_209,1,[Have systemd v209 or greater])], [])
 fi
 AC_SUBST(TOR_SYSTEMD_CFLAGS)
 AC_SUBST(TOR_SYSTEMD_LIBS)
 
 if test "x$enable_systemd" = "xyes" -a "x$have_systemd" != "xyes" ; then
-    AC_MSG_ERROR([Explicitly requested systemd support, but systemd not found])
+    AC_MSG_ERROR([Explicitly requested systemd support, but systemd not found, $pkg_config_user_action, or set SYSTEMD_CFLAGS and SYSTEMD_LIBS.])
 fi
 
 case "$host" in
@@ -246,16 +278,33 @@ dnl Tor modules options. These options are namespaced with --disable-module-XXX
 dnl ---
 
 dnl All our modules.
-m4_define(MODULES, dirauth)
+m4_define(MODULES, relay dirauth dircache)
+
+dnl Relay module.
+AC_ARG_ENABLE([module-relay],
+              AS_HELP_STRING([--disable-module-relay],
+                             [Build tor without the Relay modules: tor can not run as a relay, bridge, or authority. Implies --disable-module-dirauth]))
+AM_CONDITIONAL(BUILD_MODULE_RELAY, [test "x$enable_module_relay" != "xno"])
+AM_COND_IF(BUILD_MODULE_RELAY,
+           AC_DEFINE([HAVE_MODULE_RELAY], [1],
+                     [Compile with Relay feature support]))
+
+dnl Dircache module.  (This cannot be enabled or disabled independently of
+dnl the relay module.  It is not listed by --list-modules for this reason.)
+AM_CONDITIONAL(BUILD_MODULE_DIRCACHE,
+               [test "x$enable_module_relay" != "xno"])
+AM_COND_IF(BUILD_MODULE_DIRCACHE,
+           AC_DEFINE([HAVE_MODULE_DIRCACHE], [1],
+                     [Compile with directory cache support]))
 
 dnl Directory Authority module.
 AC_ARG_ENABLE([module-dirauth],
               AS_HELP_STRING([--disable-module-dirauth],
-                             [Do not build tor with the dirauth module]),
-              [], dnl Action if-given
-              AC_DEFINE([HAVE_MODULE_DIRAUTH], [1],
-                        [Compile with Directory Authority feature support]))
-AM_CONDITIONAL(BUILD_MODULE_DIRAUTH, [test "x$enable_module_dirauth" != "xno"])
+                             [Build tor without the Directory Authority module: tor can not run as a directory authority or bridge authority]))
+AM_CONDITIONAL(BUILD_MODULE_DIRAUTH,[test "x$enable_module_dirauth" != "xno" && test "x$enable_module_relay" != "xno"])
+AM_COND_IF(BUILD_MODULE_DIRAUTH,
+           AC_DEFINE([HAVE_MODULE_DIRAUTH], [1],
+                     [Compile with Directory Authority feature support]))
 
 dnl Helper variables.
 TOR_MODULES_ALL_ENABLED=
@@ -311,15 +360,20 @@ AM_CONDITIONAL(BUILD_HTML_DOCS, [test "x$enable_html_manual" != "xno"])
 AM_PROG_CC_C_O
 AC_PROG_CC_C99
 
-AC_ARG_VAR([PYTHON], [path to Python binary])
-AC_CHECK_PROGS(PYTHON, [ \
+AC_CACHE_CHECK([for Python 3], [tor_cv_PYTHON],
+   [AC_PATH_PROGS_FEATURE_CHECK([PYTHON], [ \
 	python3 \
 	python3.8 python3.7 python3.6 python3.5 python3.4 \
-	python \
-	python2 python2.7])
+	python ],
+   [["$ac_path_PYTHON" -c 'import sys; sys.exit(sys.version_info[0]<3)' && tor_cv_PYTHON="$ac_path_PYTHON" ac_path_PYTHON_found=:]] )])
+AC_SUBST([PYTHON], [$tor_cv_PYTHON])
+
+PYTHON="$tor_cv_PYTHON"
+
 if test "x$PYTHON" = "x"; then
-  AC_MSG_WARN([Python unavailable; some tests will not be run.])
+  AC_MSG_WARN([Python 3 unavailable; some tests will not be run.])
 fi
+
 AM_CONDITIONAL(USEPYTHON, [test "x$PYTHON" != "x"])
 
 dnl List all external rust crates we depend on here. Include the version
@@ -558,8 +612,8 @@ if test "x$enable_rust" = "xyes"; then
   if test "x$RUSTC_VERSION_MAJOR" = "x" -o "x$RUSTC_VERSION_MINOR" = "x"; then
     AC_MSG_ERROR([rustc version couldn't be identified])
   fi
-  if test "$RUSTC_VERSION_MAJOR" -lt 2 -a "$RUSTC_VERSION_MINOR" -lt 14; then
-    AC_MSG_ERROR([rustc must be at least version 1.14])
+  if test "$RUSTC_VERSION_MAJOR" -lt 2 -a "$RUSTC_VERSION_MINOR" -lt 31; then
+    AC_MSG_ERROR([rustc must be at least version 1.31.0])
   fi
   AC_MSG_RESULT([$RUSTC_VERSION])
 fi
@@ -595,6 +649,7 @@ AC_CHECK_FUNCS(
 	explicit_bzero \
 	timingsafe_memcmp \
 	flock \
+	fsync \
 	ftime \
 	get_current_dir_name \
 	getaddrinfo \
@@ -870,7 +925,7 @@ if test "x$enable_nss" = "xyes"; then
   PKG_CHECK_MODULES(NSS,
      [nss],
      [have_nss=yes],
-     [have_nss=no; AC_MSG_ERROR([You asked for NSS but I can't find it.])])
+     [have_nss=no; AC_MSG_ERROR([You asked for NSS but I can't find it, $pkg_config_user_action, or set NSS_CFLAGS and NSS_LIBS.])])
   AC_SUBST(NSS_CFLAGS)
   AC_SUBST(NSS_LIBS)
 fi
@@ -1062,10 +1117,10 @@ dnl Where we do we find lzma?
 AC_ARG_ENABLE(lzma,
       AS_HELP_STRING(--enable-lzma, [enable support for the LZMA compression scheme.]),
       [case "${enableval}" in
-        "yes") lzma=true ;;
-        "no")  lzma=false ;;
+        "yes") ;;
+        "no")  ;;
         * ) AC_MSG_ERROR(bad value for --enable-lzma) ;;
-      esac], [lzma=auto])
+      esac], [enable_lzma=auto])
 
 if test "x$enable_lzma" = "xno"; then
     have_lzma=no;
@@ -1076,7 +1131,7 @@ else
                       have_lzma=no)
 
     if test "x$have_lzma" = "xno" ; then
-        AC_MSG_WARN([Unable to find liblzma.])
+        AC_MSG_WARN([Unable to find liblzma, $pkg_config_user_action, or set LZMA_CFLAGS and LZMA_LIBS.])
     fi
 fi
 
@@ -1094,10 +1149,10 @@ dnl Where we do we find zstd?
 AC_ARG_ENABLE(zstd,
       AS_HELP_STRING(--enable-zstd, [enable support for the Zstandard compression scheme.]),
       [case "${enableval}" in
-        "yes") zstd=true ;;
-        "no")  zstd=false ;;
+        "yes") ;;
+        "no")  ;;
         * ) AC_MSG_ERROR(bad value for --enable-zstd) ;;
-      esac], [zstd=auto])
+      esac], [enable_zstd=auto])
 
 if test "x$enable_zstd" = "xno"; then
     have_zstd=no;
@@ -1108,7 +1163,7 @@ else
                       have_zstd=no)
 
     if test "x$have_zstd" = "xno" ; then
-        AC_MSG_WARN([Unable to find libzstd.])
+        AC_MSG_WARN([Unable to find libzstd, $pkg_config_user_action, or set ZSTD_CFLAGS and ZSTD_LIBS.])
     fi
 fi
 
@@ -1887,8 +1942,7 @@ if test "$tor_cv_uint8_uchar" = "no"; then
 fi
 
 AC_ARG_WITH(tcmalloc,
-AS_HELP_STRING(--with-tcmalloc, [use tcmalloc memory allocation library. Deprecated; see --with-malloc]),
-[ tcmalloc=yes ], [ tcmalloc=no ])
+AS_HELP_STRING(--with-tcmalloc, [use tcmalloc memory allocation library. Deprecated; see --with-malloc]))
 
 default_malloc=system
 
@@ -1897,7 +1951,7 @@ if test "x$enable_openbsd_malloc" = "xyes" ; then
   default_malloc=openbsd
 fi
 
-if test "x$tcmalloc" = "xyes"; then
+if test "x$with_tcmalloc" = "xyes"; then
   AC_MSG_NOTICE([The --with-tcmalloc argument is deprecated; use --with-malloc=tcmalloc instead.])
   default_malloc=tcmalloc
 fi
@@ -1915,7 +1969,7 @@ AS_CASE([$malloc],
 			have_tcmalloc=no)
 
       if test "x$have_tcmalloc" = "xno" ; then
-          AC_MSG_ERROR([Unable to find tcmalloc requested by --with-malloc.])
+          AC_MSG_ERROR([Unable to find tcmalloc requested by --with-malloc, $pkg_config_user_action, or set TCMALLOC_CFLAGS and TCMALLOC_LIBS.])
       fi
 
       CFLAGS="$CFLAGS $TCMALLOC_CFLAGS"
@@ -1928,8 +1982,8 @@ AS_CASE([$malloc],
 			have_jemalloc=yes,
 			have_jemalloc=no)
 
-      if test "x$have_tcmalloc" = "xno" ; then
-          AC_MSG_ERROR([Unable to find jemalloc requested by --with-malloc.])
+      if test "x$have_jemalloc" = "xno" ; then
+          AC_MSG_ERROR([Unable to find jemalloc requested by --with-malloc, $pkg_config_user_action, or set JEMALLOC_CFLAGS and JEMALLOC_LIBS.])
       fi
 
       CFLAGS="$CFLAGS $JEMALLOC_CFLAGS"
@@ -2519,3 +2573,141 @@ https://trac.torproject.org/projects/tor/wiki/doc/TorFragileHardening
 fi
 
 AC_OUTPUT
+
+#
+# Mini-report on what will be built.
+#
+
+PPRINT_INIT
+PPRINT_SET_INDENT(1)
+PPRINT_SET_TS(65)
+
+AS_ECHO
+AS_ECHO("Tor Version: ${PPRINT_COLOR_BLDBLU}Tor $PACKAGE_VERSION $PPRINT_COLOR_RST")
+AS_ECHO
+
+PPRINT_SUBTITLE([Build Features])
+
+PPRINT_PROP_STRING([Compiler], [$CC])
+PPRINT_PROP_STRING([Host OS], [$host_os])
+AS_ECHO
+
+test "x$enable_fatal_warnings" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([Warnings are fatal (--enable-fatal-warnings)], $value)
+
+test "x$enable_rust" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([Rust support (--enable-rust)], $value)
+
+test "x$enable_cargo_online_mode" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([Cargo Online Fetch (--enable-cargo-online-mode)], $value)
+
+test "x$enable_android" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([Android support (--enable-android)], $value)
+
+AS_ECHO
+PPRINT_SUBTITLE([Static Build])
+
+test "x$enable_static_tor" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([tor (--enable-static-tor)], $value)
+
+if test "x$enable_static_libevent" = "xyes"; then
+  PPRINT_PROP_STRING([libevent], [$TOR_LIBDIR_libevent])
+else
+  PPRINT_PROP_BOOL([libevent (--enable-static-libevent)], $value)
+fi
+
+if test "x$enable_static_openssl" = "xyes"; then
+  PPRINT_PROP_STRING([libssl], [$TOR_LIBDIR_openssl])
+else
+  PPRINT_PROP_BOOL([libssl (--enable-static-openssl)], $value)
+fi
+
+if test "x$enable_static_zlib" = "xyes"; then
+  PPRINT_PROP_STRING([zlib1g], [$TOR_LIBDIR_zlib])
+else
+  PPRINT_PROP_BOOL([zlib1g (--enable-static-zlib)], $value)
+fi
+
+AS_ECHO
+PPRINT_SUBTITLE([Optional Libraries])
+
+test "x$enable_nss" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([libnss (--enable-nss)], $value)
+
+test "x$enable_seccomp" != "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([libseccomp (--disable-seccomp)], $value)
+
+test "x$enable_libscrypt" != "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([libscrypt (--disable-libscrypt)], $value)
+
+test "x$enable_systemd" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([Systemd support (--enable-systemd)], $value)
+
+test "x$enable_lzma" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([liblzma (--enable-lzma)], $value)
+
+test "x$enable_zstd" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([libzstd (--enable-zstd)], $value)
+
+AS_ECHO
+PPRINT_SUBTITLE([Hardening])
+
+test "x$enable_gcc_hardening" != "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([Compiler Hardening (--disable-gcc-hardening)], $value)
+
+test "x$enable_linker_hardening" != "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([Linker Hardening (--disable-linker-hardening)], $value)
+
+test "x$fragile_hardening" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([Fragile Hardening (--enable-fragile-hardening, dev only)], $value)
+
+AS_ECHO
+PPRINT_SUBTITLE([Modules])
+
+m4_foreach_w([mname], MODULES,
+  [
+    test "xenable_module_mname" != "xno" && value=1 || value=0
+    PPRINT_PROP_BOOL([mname (--disable-module-mname)], $value)
+  ]
+)
+
+AS_ECHO
+PPRINT_SUBTITLE([Documentation])
+
+test "x$enable_asciidoc" != "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([AsciiDoc (--disable-asciidoc)], $value)
+
+test "x$enable_manpage" != "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([Man Pages (--disable-manpage)], $value)
+
+test "x$enable_html_manual" != "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([HTML Manual (--disable-html-manual)], $value)
+
+AS_ECHO
+PPRINT_SUBTITLE([Tests])
+
+test "x$enable_unittests" != "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([Unit tests (--disable-unittests)], $value)
+
+test "x$enable_asserts_in_tests" = "xno" && value=1 || value=0
+PPRINT_PROP_BOOL([assert()s enabled (--enable-asserts-in-tests, dev only)], $value)
+
+test "x$enable_coverage" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([Code Coverage (--enable-coverage)], $value)
+
+test "x$enable_libfuzzer" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([libFuzzer support (--enable-libfuzzer)], $value)
+
+test "x$enable_oss_fuzz" = "xyes" && value=1 || value=0
+PPRINT_PROP_BOOL([OSS-Fuzz support (--enable-oss-fuzz)], $value)
+
+AS_ECHO
+PPRINT_SUBTITLE([Install Directories])
+
+report_mandir="`eval eval echo $mandir`"
+PPRINT_PROP_STRING([Binaries], [$BINDIR])
+PPRINT_PROP_STRING([Configuration], [$CONFDIR])
+PPRINT_PROP_STRING([Man Pages], [$report_mandir])
+
+AS_ECHO
+AS_ECHO(["Configure Line: ./configure $configure_flags"])

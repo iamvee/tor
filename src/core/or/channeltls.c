@@ -1,4 +1,4 @@
-/* * Copyright (c) 2012-2019, The Tor Project, Inc. */
+/* * Copyright (c) 2012-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -34,7 +34,7 @@
  * Define this so channel.h gives us things only channel_t subclasses
  * should touch.
  */
-#define TOR_CHANNEL_INTERNAL_
+#define CHANNEL_OBJECT_PRIVATE
 
 #define CHANNELTLS_PRIVATE
 
@@ -47,6 +47,7 @@
 #include "app/config/config.h"
 #include "core/mainloop/connection.h"
 #include "core/or/connection_or.h"
+#include "feature/relay/relay_handshake.h"
 #include "feature/control/control.h"
 #include "feature/client/entrynodes.h"
 #include "trunnel/link_handshake.h"
@@ -1027,6 +1028,16 @@ channel_tls_time_process_cell(cell_t *cell, channel_tls_t *chan, int *time,
 }
 #endif /* defined(KEEP_TIMING_STATS) */
 
+#ifdef KEEP_TIMING_STATS
+#define PROCESS_CELL(tp, cl, cn) STMT_BEGIN {                   \
+    ++num ## tp;                                                \
+    channel_tls_time_process_cell(cl, cn, & tp ## time ,            \
+                             channel_tls_process_ ## tp ## _cell);  \
+    } STMT_END
+#else /* !defined(KEEP_TIMING_STATS) */
+#define PROCESS_CELL(tp, cl, cn) channel_tls_process_ ## tp ## _cell(cl, cn)
+#endif /* defined(KEEP_TIMING_STATS) */
+
 /**
  * Handle an incoming cell on a channel_tls_t.
  *
@@ -1046,16 +1057,6 @@ channel_tls_handle_cell(cell_t *cell, or_connection_t *conn)
   channel_tls_t *chan;
   int handshaking;
 
-#ifdef KEEP_TIMING_STATS
-#define PROCESS_CELL(tp, cl, cn) STMT_BEGIN {                   \
-    ++num ## tp;                                                \
-    channel_tls_time_process_cell(cl, cn, & tp ## time ,            \
-                             channel_tls_process_ ## tp ## _cell);  \
-    } STMT_END
-#else /* !(defined(KEEP_TIMING_STATS)) */
-#define PROCESS_CELL(tp, cl, cn) channel_tls_process_ ## tp ## _cell(cl, cn)
-#endif /* defined(KEEP_TIMING_STATS) */
-
   tor_assert(cell);
   tor_assert(conn);
 
@@ -1073,7 +1074,8 @@ channel_tls_handle_cell(cell_t *cell, or_connection_t *conn)
     return;
 
   /* Reject all but VERSIONS and NETINFO when handshaking. */
-  /* (VERSIONS should actually be impossible; it's variable-length.) */
+  /* (VERSIONS actually indicates a protocol warning: it's variable-length,
+   * so if it reaches this function, we're on a v1 connection.) */
   if (handshaking && cell->command != CELL_VERSIONS &&
       cell->command != CELL_NETINFO) {
     log_fn(LOG_PROTOCOL_WARN, LD_PROTOCOL,
@@ -1106,7 +1108,15 @@ channel_tls_handle_cell(cell_t *cell, or_connection_t *conn)
       /* do nothing */
       break;
     case CELL_VERSIONS:
-      tor_fragile_assert();
+      /* A VERSIONS cell should always be a variable-length cell, and
+       * so should never reach this function (which handles constant-sized
+       * cells). But if the connection is using the (obsolete) v1 link
+       * protocol, all cells will be treated as constant-sized, and so
+       * it's possible we'll reach this code.
+       */
+      log_fn(LOG_PROTOCOL_WARN, LD_CHANNEL,
+             "Received unexpected VERSIONS cell on a channel using link "
+             "protocol %d; ignoring.", conn->link_proto);
       break;
     case CELL_NETINFO:
       ++stats_n_netinfo_cells_processed;
@@ -1319,6 +1329,8 @@ channel_tls_handle_var_cell(var_cell_t *var_cell, or_connection_t *conn)
       break;
   }
 }
+
+#undef PROCESS_CELL
 
 /**
  * Update channel marks after connection_or.c has changed an address.
@@ -1664,7 +1676,19 @@ tor_addr_from_netinfo_addr(tor_addr_t *tor_addr,
 }
 
 /**
- * Process a 'netinfo' cell.
+ * Helper: compute the absolute value of a time_t.
+ *
+ * (we need this because labs() doesn't always work for time_t, since
+ * long can be shorter than time_t.)
+ */
+static inline time_t
+time_abs(time_t val)
+{
+  return (val < 0) ? -val : val;
+}
+
+/**
+ * Process a 'netinfo' cell
  *
  * This function is called to handle an incoming NETINFO cell; read and act
  * on its contents, and set the connection state to "open".
@@ -1679,7 +1703,7 @@ channel_tls_process_netinfo_cell(cell_t *cell, channel_tls_t *chan)
   time_t now = time(NULL);
   const routerinfo_t *me = router_get_my_routerinfo();
 
-  long apparent_skew = 0;
+  time_t apparent_skew = 0;
   tor_addr_t my_apparent_addr = TOR_ADDR_NULL;
   int started_here = 0;
   const char *identity_digest = NULL;
@@ -1765,7 +1789,7 @@ channel_tls_process_netinfo_cell(cell_t *cell, channel_tls_t *chan)
   my_addr_type = netinfo_addr_get_addr_type(my_addr);
   my_addr_len = netinfo_addr_get_len(my_addr);
 
-  if (labs(now - chan->conn->handshake_state->sent_versions_at) < 180) {
+  if ((now - chan->conn->handshake_state->sent_versions_at) < 180) {
     apparent_skew = now - timestamp;
   }
   /* We used to check:
@@ -1842,7 +1866,7 @@ channel_tls_process_netinfo_cell(cell_t *cell, channel_tls_t *chan)
   /* Act on apparent skew. */
   /** Warn when we get a netinfo skew with at least this value. */
 #define NETINFO_NOTICE_SKEW 3600
-  if (labs(apparent_skew) > NETINFO_NOTICE_SKEW &&
+  if (time_abs(apparent_skew) > NETINFO_NOTICE_SKEW &&
       (started_here ||
        connection_or_digest_is_known_relay(chan->conn->identity_digest))) {
     int trusted = router_digest_is_trusted_dir(chan->conn->identity_digest);

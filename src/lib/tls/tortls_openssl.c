@@ -1,6 +1,6 @@
 /* Copyright (c) 2003, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -37,7 +37,7 @@
 
 /* Some versions of OpenSSL declare SSL_get_selected_srtp_profile twice in
  * srtp.h. Suppress the GCC warning so we can build with -Wredundant-decl. */
-DISABLE_GCC_WARNING(redundant-decls)
+DISABLE_GCC_WARNING("-Wredundant-decls")
 
 #include <openssl/opensslv.h>
 
@@ -54,7 +54,7 @@ DISABLE_GCC_WARNING(redundant-decls)
 #include <openssl/bn.h>
 #include <openssl/rsa.h>
 
-ENABLE_GCC_WARNING(redundant-decls)
+ENABLE_GCC_WARNING("-Wredundant-decls")
 
 #include "lib/tls/tortls.h"
 #include "lib/tls/tortls_st.h"
@@ -464,7 +464,9 @@ static const char UNRESTRICTED_SERVER_CIPHER_LIST[] =
 /** List of ciphers that clients should advertise, omitting items that
  * our OpenSSL doesn't know about. */
 static const char CLIENT_CIPHER_LIST[] =
+#ifndef COCCI
 #include "lib/tls/ciphers.inc"
+#endif
   /* Tell it not to use SSLv2 ciphers, so that it can select an SSLv3 version
    * of any cipher we say. */
   "!SSLv2"
@@ -657,7 +659,7 @@ tor_tls_context_new(crypto_pk_t *identity, unsigned int key_lifetime,
     if (r < 0)
       goto error;
   }
-#else /* !(defined(SSL_CTX_set1_groups_list) || ...) */
+#else /* !(defined(SSL_CTX_set1_groups_list) || defined(HAVE_SSL_CTX_SE...)) */
   if (! is_client) {
     int nid;
     EC_KEY *ec_key;
@@ -673,7 +675,7 @@ tor_tls_context_new(crypto_pk_t *identity, unsigned int key_lifetime,
       SSL_CTX_set_tmp_ecdh(result->ctx, ec_key);
     EC_KEY_free(ec_key);
   }
-#endif /* defined(SSL_CTX_set1_groups_list) || ...) */
+#endif /* defined(SSL_CTX_set1_groups_list) || defined(HAVE_SSL_CTX_SET1...) */
   SSL_CTX_set_verify(result->ctx, SSL_VERIFY_PEER,
                      always_accept_verify_cb);
   /* let us realloc bufs that we're writing from */
@@ -764,7 +766,7 @@ find_cipher_by_id(const SSL *ssl, const SSL_METHOD *m, uint16_t cipher)
       tor_assert((SSL_CIPHER_get_id(c) & 0xffff) == cipher);
     return c != NULL;
   }
-#else /* !(defined(HAVE_SSL_CIPHER_FIND)) */
+#else /* !defined(HAVE_SSL_CIPHER_FIND) */
 
 # if defined(HAVE_STRUCT_SSL_METHOD_ST_GET_CIPHER_BY_CHAR)
   if (m && m->get_cipher_by_char) {

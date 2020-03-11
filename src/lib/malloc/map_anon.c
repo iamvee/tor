@@ -1,6 +1,6 @@
 /* Copyright (c) 2003-2004, Roger Dingledine
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -26,6 +26,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #endif
+
+#include <string.h>
+#include <errno.h>
 
 /**
  * Macro to get the high bytes of a size_t, if there are high bytes.
@@ -75,8 +78,8 @@
 #endif /* defined(HAVE_MINHERIT) || ... */
 
 #if defined(HAVE_MINHERIT) && !defined(FLAG_ZERO) && !defined(FLAG_NOINHERIT)
-#warn "minherit() is defined, but we couldn't find the right flag for it."
-#warn "This is probably a bug in Tor's support for this platform."
+#warning "minherit() is defined, but FLAG_ZERO/NOINHERIT are not."
+#warning "This is probably a bug in Tor's support for this platform."
 #endif
 
 /**
@@ -108,8 +111,18 @@ static int
 nodump_mem(void *mem, size_t sz)
 {
 #if defined(MADV_DONTDUMP)
-  return madvise(mem, sz, MADV_DONTDUMP);
-#else
+  int rv = madvise(mem, sz, MADV_DONTDUMP);
+  if (rv == 0) {
+    return 0;
+  } else if (errno == ENOSYS || errno == EINVAL) {
+    return 0; // syscall not supported, or flag not supported.
+  } else {
+    tor_log_err_sigsafe("Unexpected error from madvise: ",
+                        strerror(errno),
+                        NULL);
+    return -1;
+  }
+#else /* !defined(MADV_DONTDUMP) */
   (void) mem;
   (void) sz;
   return 0;
@@ -136,18 +149,33 @@ noinherit_mem(void *mem, size_t sz, inherit_res_t *inherit_result_out)
     return 0;
   }
 #endif /* defined(FLAG_ZERO) */
+
 #ifdef FLAG_NOINHERIT
   int r2 = MINHERIT(mem, sz, FLAG_NOINHERIT);
   if (r2 == 0) {
     *inherit_result_out = INHERIT_RES_DROP;
+    return 0;
   }
-  return r2;
-#else /* !(defined(FLAG_NOINHERIT)) */
+#endif /* defined(FLAG_NOINHERIT) */
+
+#if defined(FLAG_ZERO) || defined(FLAG_NOINHERIT)
+  /* At least one operation was tried, and neither succeeded. */
+
+  if (errno == ENOSYS || errno == EINVAL) {
+    /* Syscall not supported, or flag not supported. */
+    return 0;
+  } else {
+    tor_log_err_sigsafe("Unexpected error from minherit: ",
+                        strerror(errno),
+                        NULL);
+    return -1;
+  }
+#else /* !(defined(FLAG_ZERO) || defined(FLAG_NOINHERIT)) */
   (void)inherit_result_out;
   (void)mem;
   (void)sz;
   return 0;
-#endif /* defined(FLAG_NOINHERIT) */
+#endif /* defined(FLAG_ZERO) || defined(FLAG_NOINHERIT) */
 }
 
 /**

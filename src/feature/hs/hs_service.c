@@ -1,4 +1,4 @@
-/* Copyright (c) 2016-2019, The Tor Project, Inc. */
+/* Copyright (c) 2016-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -30,7 +30,6 @@
 #include "feature/rend/rendservice.h"
 #include "lib/crypt_ops/crypto_ope.h"
 #include "lib/crypt_ops/crypto_rand.h"
-#include "lib/crypt_ops/crypto_rand.h"
 #include "lib/crypt_ops/crypto_util.h"
 
 #include "feature/hs/hs_circuit.h"
@@ -42,6 +41,7 @@
 #include "feature/hs/hs_intropoint.h"
 #include "feature/hs/hs_service.h"
 #include "feature/hs/hs_stats.h"
+#include "feature/hs/hs_ob.h"
 
 #include "feature/dircommon/dir_connection_st.h"
 #include "core/or/edge_connection_st.h"
@@ -67,7 +67,8 @@
 #include <unistd.h>
 #endif
 
-/* Helper macro. Iterate over every service in the global map. The var is the
+#ifndef COCCI
+/** Helper macro. Iterate over every service in the global map. The var is the
  * name of the service pointer. */
 #define FOR_EACH_SERVICE_BEGIN(var)                          \
     STMT_BEGIN                                               \
@@ -76,7 +77,7 @@
       var = *var##_iter;
 #define FOR_EACH_SERVICE_END } STMT_END ;
 
-/* Helper macro. Iterate over both current and previous descriptor of a
+/** Helper macro. Iterate over both current and previous descriptor of a
  * service. The var is the name of the descriptor pointer. This macro skips
  * any descriptor object of the service that is NULL. */
 #define FOR_EACH_DESCRIPTOR_BEGIN(service, var)                  \
@@ -88,6 +89,7 @@
                                 (var = service->desc_next);      \
       if (var == NULL) continue;
 #define FOR_EACH_DESCRIPTOR_END } STMT_END ;
+#endif /* !defined(COCCI) */
 
 /* Onion service directory file names. */
 static const char fname_keyfile_prefix[] = "hs_ed25519";
@@ -95,7 +97,7 @@ static const char dname_client_pubkeys[] = "authorized_clients";
 static const char fname_hostname[] = "hostname";
 static const char address_tld[] = "onion";
 
-/* Staging list of service object. When configuring service, we add them to
+/** Staging list of service object. When configuring service, we add them to
  * this list considered a staging area and they will get added to our global
  * map once the keys have been loaded. These two steps are separated because
  * loading keys requires that we are an actual running tor process. */
@@ -118,7 +120,7 @@ static int service_encode_descriptor(const hs_service_t *service,
                                      const ed25519_keypair_t *signing_kp,
                                      char **encoded_out);
 
-/* Helper: Function to compare two objects in the service map. Return 1 if the
+/** Helper: Function to compare two objects in the service map. Return 1 if the
  * two service have the same master public identity key. */
 static inline int
 hs_service_ht_eq(const hs_service_t *first, const hs_service_t *second)
@@ -130,7 +132,7 @@ hs_service_ht_eq(const hs_service_t *first, const hs_service_t *second)
                            &second->keys.identity_pk);
 }
 
-/* Helper: Function for the service hash table code below. The key used is the
+/** Helper: Function for the service hash table code below. The key used is the
  * master public identity key which is ultimately the onion address. */
 static inline unsigned int
 hs_service_ht_hash(const hs_service_t *service)
@@ -140,7 +142,7 @@ hs_service_ht_hash(const hs_service_t *service)
                                    sizeof(service->keys.identity_pk.pubkey));
 }
 
-/* This is _the_ global hash map of hidden services which indexed the service
+/** This is _the_ global hash map of hidden services which indexed the service
  * contained in it by master public identity key which is roughly the onion
  * address of the service. */
 static struct hs_service_ht *hs_service_map;
@@ -150,13 +152,13 @@ HT_PROTOTYPE(hs_service_ht,      /* Name of hashtable. */
              hs_service_t,       /* Object contained in the map. */
              hs_service_node,    /* The name of the HT_ENTRY member. */
              hs_service_ht_hash, /* Hashing function. */
-             hs_service_ht_eq)   /* Compare function for objects. */
+             hs_service_ht_eq);  /* Compare function for objects. */
 
 HT_GENERATE2(hs_service_ht, hs_service_t, hs_service_node,
              hs_service_ht_hash, hs_service_ht_eq,
-             0.6, tor_reallocarray, tor_free_)
+             0.6, tor_reallocarray, tor_free_);
 
-/* Query the given service map with a public key and return a service object
+/** Query the given service map with a public key and return a service object
  * if found else NULL. It is also possible to set a directory path in the
  * search query. If pk is NULL, then it will be set to zero indicating the
  * hash table to compare the directory path instead. */
@@ -171,7 +173,7 @@ find_service(hs_service_ht *map, const ed25519_public_key_t *pk)
   return HT_FIND(hs_service_ht, map, &dummy_service);
 }
 
-/* Register the given service in the given map. If the service already exists
+/** Register the given service in the given map. If the service already exists
  * in the map, -1 is returned. On success, 0 is returned and the service
  * ownership has been transferred to the global map. */
 STATIC int
@@ -196,7 +198,7 @@ register_service(hs_service_ht *map, hs_service_t *service)
   return 0;
 }
 
-/* Remove a given service from the given map. If service is NULL or the
+/** Remove a given service from the given map. If service is NULL or the
  * service key is unset, return gracefully. */
 STATIC void
 remove_service(hs_service_ht *map, hs_service_t *service)
@@ -226,7 +228,7 @@ remove_service(hs_service_ht *map, hs_service_t *service)
   }
 }
 
-/* Set the default values for a service configuration object <b>c</b>. */
+/** Set the default values for a service configuration object <b>c</b>. */
 static void
 set_service_default_config(hs_service_config_t *c,
                            const or_options_t *options)
@@ -242,9 +244,12 @@ set_service_default_config(hs_service_config_t *c,
   c->is_single_onion = 0;
   c->dir_group_readable = 0;
   c->is_ephemeral = 0;
+  c->has_dos_defense_enabled = HS_CONFIG_V3_DOS_DEFENSE_DEFAULT;
+  c->intro_dos_rate_per_sec = HS_CONFIG_V3_DOS_DEFENSE_RATE_PER_SEC_DEFAULT;
+  c->intro_dos_burst_per_sec = HS_CONFIG_V3_DOS_DEFENSE_BURST_PER_SEC_DEFAULT;
 }
 
-/* From a service configuration object config, clear everything from it
+/** From a service configuration object config, clear everything from it
  * meaning free allocated pointers and reset the values. */
 STATIC void
 service_clear_config(hs_service_config_t *config)
@@ -263,10 +268,15 @@ service_clear_config(hs_service_config_t *config)
                       service_authorized_client_free(p));
     smartlist_free(config->clients);
   }
+  if (config->ob_master_pubkeys) {
+    SMARTLIST_FOREACH(config->ob_master_pubkeys, ed25519_public_key_t *, k,
+                      tor_free(k));
+    smartlist_free(config->ob_master_pubkeys);
+  }
   memset(config, 0, sizeof(*config));
 }
 
-/* Helper function to return a human readable description of the given intro
+/** Helper function to return a human readable description of the given intro
  * point object.
  *
  * This function is not thread-safe. Each call to this invalidates the
@@ -298,7 +308,7 @@ describe_intro_point(const hs_service_intro_point_t *ip)
   return buf;
 }
 
-/* Return the lower bound of maximum INTRODUCE2 cells per circuit before we
+/** Return the lower bound of maximum INTRODUCE2 cells per circuit before we
  * rotate intro point (defined by a consensus parameter or the default
  * value). */
 static int32_t
@@ -311,7 +321,7 @@ get_intro_point_min_introduce2(void)
                                  0, INT32_MAX);
 }
 
-/* Return the upper bound of maximum INTRODUCE2 cells per circuit before we
+/** Return the upper bound of maximum INTRODUCE2 cells per circuit before we
  * rotate intro point (defined by a consensus parameter or the default
  * value). */
 static int32_t
@@ -324,8 +334,8 @@ get_intro_point_max_introduce2(void)
                                  0, INT32_MAX);
 }
 
-/* Return the minimum lifetime in seconds of an introduction point defined by a
- * consensus parameter or the default value. */
+/** Return the minimum lifetime in seconds of an introduction point defined by
+ * a consensus parameter or the default value. */
 static int32_t
 get_intro_point_min_lifetime(void)
 {
@@ -341,8 +351,8 @@ get_intro_point_min_lifetime(void)
                                  0, INT32_MAX);
 }
 
-/* Return the maximum lifetime in seconds of an introduction point defined by a
- * consensus parameter or the default value. */
+/** Return the maximum lifetime in seconds of an introduction point defined by
+ * a consensus parameter or the default value. */
 static int32_t
 get_intro_point_max_lifetime(void)
 {
@@ -358,7 +368,7 @@ get_intro_point_max_lifetime(void)
                                  0, INT32_MAX);
 }
 
-/* Return the number of extra introduction point defined by a consensus
+/** Return the number of extra introduction point defined by a consensus
  * parameter or the default value. */
 static int32_t
 get_intro_point_num_extra(void)
@@ -369,7 +379,7 @@ get_intro_point_num_extra(void)
                                  NUM_INTRO_POINTS_EXTRA, 0, 128);
 }
 
-/* Helper: Function that needs to return 1 for the HT for each loop which
+/** Helper: Function that needs to return 1 for the HT for each loop which
  * frees every service in an hash map. */
 static int
 ht_free_service_(struct hs_service_t *service, void *data)
@@ -381,7 +391,7 @@ ht_free_service_(struct hs_service_t *service, void *data)
   return 1;
 }
 
-/* Free every service that can be found in the global map. Once done, clear
+/** Free every service that can be found in the global map. Once done, clear
  * and free the global map. */
 static void
 service_free_all(void)
@@ -403,7 +413,7 @@ service_free_all(void)
   }
 }
 
-/* Free a given service intro point object. */
+/** Free a given service intro point object. */
 STATIC void
 service_intro_point_free_(hs_service_intro_point_t *ip)
 {
@@ -418,7 +428,7 @@ service_intro_point_free_(hs_service_intro_point_t *ip)
   tor_free(ip);
 }
 
-/* Helper: free an hs_service_intro_point_t object. This function is used by
+/** Helper: free an hs_service_intro_point_t object. This function is used by
  * digest256map_free() which requires a void * pointer. */
 static void
 service_intro_point_free_void(void *obj)
@@ -426,7 +436,7 @@ service_intro_point_free_void(void *obj)
   service_intro_point_free_(obj);
 }
 
-/* Return a newly allocated service intro point and fully initialized from the
+/** Return a newly allocated service intro point and fully initialized from the
  * given node_t node, if non NULL.
  *
  * If node is NULL, returns a hs_service_intro_point_t with an empty link
@@ -489,6 +499,10 @@ service_intro_point_new(const node_t *node)
     }
   }
 
+  /* Flag if this intro point supports the INTRO2 dos defenses. */
+  ip->support_intro2_dos_defense =
+    node_supports_establish_intro_dos_extension(node);
+
   /* Finally, copy onion key from the node. */
   memcpy(&ip->onion_key, node_get_curve25519_onion_key(node),
          sizeof(ip->onion_key));
@@ -500,7 +514,7 @@ service_intro_point_new(const node_t *node)
   return NULL;
 }
 
-/* Add the given intro point object to the given intro point map. The intro
+/** Add the given intro point object to the given intro point map. The intro
  * point MUST have its RSA encryption key set if this is a legacy type or the
  * authentication key set otherwise. */
 STATIC void
@@ -516,7 +530,7 @@ service_intro_point_add(digest256map_t *map, hs_service_intro_point_t *ip)
   tor_assert_nonfatal(!old_ip_entry);
 }
 
-/* For a given service, remove the intro point from that service's descriptors
+/** For a given service, remove the intro point from that service's descriptors
  * (check both current and next descriptor) */
 STATIC void
 service_intro_point_remove(const hs_service_t *service,
@@ -534,7 +548,7 @@ service_intro_point_remove(const hs_service_t *service,
   } FOR_EACH_DESCRIPTOR_END;
 }
 
-/* For a given service and authentication key, return the intro point or NULL
+/** For a given service and authentication key, return the intro point or NULL
  * if not found. This will check both descriptors in the service. */
 STATIC hs_service_intro_point_t *
 service_intro_point_find(const hs_service_t *service,
@@ -565,7 +579,7 @@ service_intro_point_find(const hs_service_t *service,
   return ip;
 }
 
-/* For a given service and intro point, return the descriptor for which the
+/** For a given service and intro point, return the descriptor for which the
  * intro point is assigned to. NULL is returned if not found. */
 STATIC hs_service_descriptor_t *
 service_desc_find_by_intro(const hs_service_t *service,
@@ -587,7 +601,7 @@ service_desc_find_by_intro(const hs_service_t *service,
   return descp;
 }
 
-/* From a circuit identifier, get all the possible objects associated with the
+/** From a circuit identifier, get all the possible objects associated with the
  * ident. If not NULL, service, ip or desc are set if the object can be found.
  * They are untouched if they can't be found.
  *
@@ -620,7 +634,7 @@ get_objects_from_ident(const hs_ident_circuit_t *ident,
   }
 }
 
-/* From a given intro point, return the first link specifier of type
+/** From a given intro point, return the first link specifier of type
  * encountered in the link specifier list. Return NULL if it can't be found.
  *
  * The caller does NOT have ownership of the object, the intro point does. */
@@ -643,7 +657,7 @@ get_link_spec_by_type(const hs_service_intro_point_t *ip, uint8_t type)
   return lnk_spec;
 }
 
-/* Given a service intro point, return the node_t associated to it. This can
+/** Given a service intro point, return the node_t associated to it. This can
  * return NULL if the given intro point has no legacy ID or if the node can't
  * be found in the consensus. */
 STATIC const node_t *
@@ -662,7 +676,7 @@ get_node_from_intro_point(const hs_service_intro_point_t *ip)
     (const char *) link_specifier_getconstarray_un_legacy_id(ls));
 }
 
-/* Given a service intro point, return the extend_info_t for it. This can
+/** Given a service intro point, return the extend_info_t for it. This can
  * return NULL if the node can't be found for the intro point or the extend
  * info can't be created for the found node. If direct_conn is set, the extend
  * info is validated on if we can connect directly. */
@@ -691,10 +705,10 @@ get_extend_info_from_intro_point(const hs_service_intro_point_t *ip,
   return info;
 }
 
-/* Return the number of introduction points that are established for the
+/** Return the number of introduction points that are established for the
  * given descriptor. */
-static unsigned int
-count_desc_circuit_established(const hs_service_descriptor_t *desc)
+MOCK_IMPL(STATIC unsigned int,
+count_desc_circuit_established, (const hs_service_descriptor_t *desc))
 {
   unsigned int count = 0;
 
@@ -702,13 +716,13 @@ count_desc_circuit_established(const hs_service_descriptor_t *desc)
 
   DIGEST256MAP_FOREACH(desc->intro_points.map, key,
                        const hs_service_intro_point_t *, ip) {
-    count += ip->circuit_established;
+    count += !!hs_circ_service_get_established_intro_circ(ip);
   } DIGEST256MAP_FOREACH_END;
 
   return count;
 }
 
-/* For a given service and descriptor of that service, close all active
+/** For a given service and descriptor of that service, close all active
  * directory connections. */
 static void
 close_directory_connections(const hs_service_t *service,
@@ -743,7 +757,7 @@ close_directory_connections(const hs_service_t *service,
   smartlist_free(dir_conns);
 }
 
-/* Close all rendezvous circuits for the given service. */
+/** Close all rendezvous circuits for the given service. */
 static void
 close_service_rp_circuits(hs_service_t *service)
 {
@@ -773,7 +787,7 @@ close_service_rp_circuits(hs_service_t *service)
   }
 }
 
-/* Close the circuit(s) for the given map of introduction points. */
+/** Close the circuit(s) for the given map of introduction points. */
 static void
 close_intro_circuits(hs_service_intropoints_t *intro_points)
 {
@@ -791,7 +805,7 @@ close_intro_circuits(hs_service_intropoints_t *intro_points)
   } DIGEST256MAP_FOREACH_END;
 }
 
-/* Close all introduction circuits for the given service. */
+/** Close all introduction circuits for the given service. */
 static void
 close_service_intro_circuits(hs_service_t *service)
 {
@@ -802,7 +816,7 @@ close_service_intro_circuits(hs_service_t *service)
   } FOR_EACH_DESCRIPTOR_END;
 }
 
-/* Close any circuits related to the given service. */
+/** Close any circuits related to the given service. */
 static void
 close_service_circuits(hs_service_t *service)
 {
@@ -818,7 +832,7 @@ close_service_circuits(hs_service_t *service)
   close_service_rp_circuits(service);
 }
 
-/* Move every ephemeral services from the src service map to the dst service
+/** Move every ephemeral services from the src service map to the dst service
  * map. It is possible that a service can't be register to the dst map which
  * won't stop the process of moving them all but will trigger a log warn. */
 static void
@@ -848,7 +862,7 @@ move_ephemeral_services(hs_service_ht *src, hs_service_ht *dst)
   }
 }
 
-/* Return a const string of the directory path escaped. If this is an
+/** Return a const string of the directory path escaped. If this is an
  * ephemeral service, it returns "[EPHEMERAL]". This can only be called from
  * the main thread because escaped() uses a static variable. */
 static const char *
@@ -882,7 +896,7 @@ move_hs_state(hs_service_t *src_service, hs_service_t *dst_service)
   src->replay_cache_rend_cookie = NULL; /* steal pointer reference */
 }
 
-/* Register services that are in the staging list. Once this function returns,
+/** Register services that are in the staging list. Once this function returns,
  * the global service map will be set with the right content and all non
  * surviving services will be cleaned up. */
 static void
@@ -950,7 +964,7 @@ register_all_services(void)
   hs_service_map_has_changed();
 }
 
-/* Write the onion address of a given service to the given filename fname_ in
+/** Write the onion address of a given service to the given filename fname_ in
  * the service directory. Return 0 on success else -1 on error. */
 STATIC int
 write_address_to_file(const hs_service_t *service, const char *fname_)
@@ -991,7 +1005,7 @@ write_address_to_file(const hs_service_t *service, const char *fname_)
   return ret;
 }
 
-/* Load and/or generate private keys for the given service. On success, the
+/** Load and/or generate private keys for the given service. On success, the
  * hostname file will be written to disk along with the master private key iff
  * the service is not configured for offline keys. Return 0 on success else -1
  * on failure. */
@@ -1067,7 +1081,7 @@ load_service_keys(hs_service_t *service)
   return ret;
 }
 
-/* Check if the client file name is valid or not. Return 1 if valid,
+/** Check if the client file name is valid or not. Return 1 if valid,
  * otherwise return 0. */
 STATIC int
 client_filename_is_valid(const char *filename)
@@ -1089,7 +1103,7 @@ client_filename_is_valid(const char *filename)
   return ret;
 }
 
-/* Parse an authorized client from a string. The format of a client string
+/** Parse an authorized client from a string. The format of a client string
  * looks like (see rend-spec-v3.txt):
  *
  *  <auth-type>:<key-type>:<base32-encoded-public-key>
@@ -1171,7 +1185,7 @@ parse_authorized_client(const char *client_key_str)
   return client;
 }
 
-/* Load all the client public keys for the given service. Return 0 on
+/** Load all the client public keys for the given service. Return 0 on
  * success else -1 on failure. */
 static int
 load_client_keys(hs_service_t *service)
@@ -1274,6 +1288,7 @@ load_client_keys(hs_service_t *service)
   return ret;
 }
 
+/** Release all storage held in <b>client</b>. */
 STATIC void
 service_authorized_client_free_(hs_service_authorized_client_t *client)
 {
@@ -1284,7 +1299,7 @@ service_authorized_client_free_(hs_service_authorized_client_t *client)
   tor_free(client);
 }
 
-/* Free a given service descriptor object and all key material is wiped. */
+/** Free a given service descriptor object and all key material is wiped. */
 STATIC void
 service_descriptor_free_(hs_service_descriptor_t *desc)
 {
@@ -1305,7 +1320,7 @@ service_descriptor_free_(hs_service_descriptor_t *desc)
   tor_free(desc);
 }
 
-/* Return a newly allocated service descriptor object. */
+/** Return a newly allocated service descriptor object. */
 STATIC hs_service_descriptor_t *
 service_descriptor_new(void)
 {
@@ -1318,7 +1333,7 @@ service_descriptor_new(void)
   return sdesc;
 }
 
-/* Allocate and return a deep copy of client. */
+/** Allocate and return a deep copy of client. */
 static hs_service_authorized_client_t *
 service_authorized_client_dup(const hs_service_authorized_client_t *client)
 {
@@ -1336,7 +1351,7 @@ service_authorized_client_dup(const hs_service_authorized_client_t *client)
   return client_dup;
 }
 
-/* If two authorized clients are equal, return 0. If the first one should come
+/** If two authorized clients are equal, return 0. If the first one should come
  * before the second, return less than zero. If the first should come after
  * the second, return greater than zero. */
 static int
@@ -1353,7 +1368,7 @@ service_authorized_client_cmp(const hs_service_authorized_client_t *client1,
                     CURVE25519_PUBKEY_LEN);
 }
 
-/* Helper for sorting authorized clients. */
+/** Helper for sorting authorized clients. */
 static int
 compare_service_authorzized_client_(const void **_a, const void **_b)
 {
@@ -1361,7 +1376,7 @@ compare_service_authorzized_client_(const void **_a, const void **_b)
   return service_authorized_client_cmp(a, b);
 }
 
-/* If the list of hs_service_authorized_client_t's is different between
+/** If the list of hs_service_authorized_client_t's is different between
  * src and dst, return 1. Otherwise, return 0. */
 STATIC int
 service_authorized_client_config_equal(const hs_service_config_t *config1,
@@ -1422,7 +1437,7 @@ service_authorized_client_config_equal(const hs_service_config_t *config1,
   return ret;
 }
 
-/* Move descriptor(s) from the src service to the dst service and modify their
+/** Move descriptor(s) from the src service to the dst service and modify their
  * content if necessary. We do this during SIGHUP when we re-create our
  * hidden services. */
 static void
@@ -1481,7 +1496,7 @@ move_descriptors(hs_service_t *src, hs_service_t *dst)
   service_descriptor_free(dst->desc_next);
 }
 
-/* From the given service, remove all expired failing intro points for each
+/** From the given service, remove all expired failing intro points for each
  * descriptor. */
 static void
 remove_expired_failing_intro(hs_service_t *service, time_t now)
@@ -1500,7 +1515,7 @@ remove_expired_failing_intro(hs_service_t *service, time_t now)
   } FOR_EACH_DESCRIPTOR_END;
 }
 
-/* For the given descriptor desc, put all node_t object found from its failing
+/** For the given descriptor desc, put all node_t object found from its failing
  * intro point list and put them in the given node_list. */
 static void
 setup_intro_point_exclude_list(const hs_service_descriptor_t *desc,
@@ -1518,7 +1533,7 @@ setup_intro_point_exclude_list(const hs_service_descriptor_t *desc,
   } DIGESTMAP_FOREACH_END;
 }
 
-/* For the given failing intro point ip, we add its time of failure to the
+/** For the given failing intro point ip, we add its time of failure to the
  * failed map and index it by identity digest (legacy ID) in the descriptor
  * desc failed id map. */
 static void
@@ -1542,7 +1557,7 @@ remember_failing_intro_point(const hs_service_intro_point_t *ip,
   tor_free(prev_ptr);
 }
 
-/* Using a given descriptor signing keypair signing_kp, a service intro point
+/** Using a given descriptor signing keypair signing_kp, a service intro point
  * object ip and the time now, setup the content of an already allocated
  * descriptor intro desc_ip.
  *
@@ -1631,7 +1646,7 @@ setup_desc_intro_point(const ed25519_keypair_t *signing_kp,
   return ret;
 }
 
-/* Using the given descriptor from the given service, build the descriptor
+/** Using the given descriptor from the given service, build the descriptor
  * intro point list so we can then encode the descriptor for publication. This
  * function does not pick intro points, they have to be in the descriptor
  * current map. Cryptographic material (keys) must be initialized in the
@@ -1652,6 +1667,15 @@ build_desc_intro_points(const hs_service_t *service,
 
   DIGEST256MAP_FOREACH(desc->intro_points.map, key,
                        const hs_service_intro_point_t *, ip) {
+    if (!hs_circ_service_get_established_intro_circ(ip)) {
+      /* Ignore un-established intro points. They can linger in that list
+       * because their circuit has not opened and they haven't been removed
+       * yet even though we have enough intro circuits.
+       *
+       * Due to #31561, it can stay in that list until rotation so this check
+       * prevents to publish an intro point without a circuit. */
+      continue;
+    }
     hs_desc_intro_point_t *desc_ip = hs_desc_intro_point_new();
     if (setup_desc_intro_point(&desc->signing_kp, ip, now, desc_ip) < 0) {
       hs_desc_intro_point_free(desc_ip);
@@ -1662,7 +1686,7 @@ build_desc_intro_points(const hs_service_t *service,
   } DIGEST256MAP_FOREACH_END;
 }
 
-/* Build the descriptor signing key certificate. */
+/** Build the descriptor signing key certificate. */
 static void
 build_desc_signing_key_cert(hs_service_descriptor_t *desc, time_t now)
 {
@@ -1688,7 +1712,7 @@ build_desc_signing_key_cert(hs_service_descriptor_t *desc, time_t now)
   tor_assert_nonfatal(plaintext->signing_key_cert);
 }
 
-/* Populate the descriptor encrypted section from the given service object.
+/** Populate the descriptor encrypted section from the given service object.
  * This will generate a valid list of introduction points that can be used
  * after for circuit creation. Return 0 on success else -1 on error. */
 static int
@@ -1718,7 +1742,7 @@ build_service_desc_encrypted(const hs_service_t *service,
   return 0;
 }
 
-/* Populate the descriptor superencrypted section from the given service
+/** Populate the descriptor superencrypted section from the given service
  * object. This will generate a valid list of hs_desc_authorized_client_t
  * of clients that are authorized to use the service. Return 0 on success
  * else -1 on error. */
@@ -1746,7 +1770,8 @@ build_service_desc_superencrypted(const hs_service_t *service,
          sizeof(curve25519_public_key_t));
 
   /* Test that subcred is not zero because we might use it below */
-  if (BUG(fast_mem_is_zero((char*)desc->desc->subcredential, DIGEST256_LEN))) {
+  if (BUG(fast_mem_is_zero((char*)desc->desc->subcredential.subcred,
+                           DIGEST256_LEN))) {
     return -1;
   }
 
@@ -1763,7 +1788,7 @@ build_service_desc_superencrypted(const hs_service_t *service,
 
       /* Prepare the client for descriptor and then add to the list in the
        * superencrypted part of the descriptor */
-      hs_desc_build_authorized_client(desc->desc->subcredential,
+      hs_desc_build_authorized_client(&desc->desc->subcredential,
                                       &client->client_pk,
                                       &desc->auth_ephemeral_kp.seckey,
                                       desc->descriptor_cookie, desc_client);
@@ -1801,7 +1826,7 @@ build_service_desc_superencrypted(const hs_service_t *service,
   return 0;
 }
 
-/* Populate the descriptor plaintext section from the given service object.
+/** Populate the descriptor plaintext section from the given service object.
  * The caller must make sure that the keys in the descriptors are valid that
  * is are non-zero. This can't fail. */
 static void
@@ -1819,7 +1844,7 @@ build_service_desc_plaintext(const hs_service_t *service,
 
   /* Set the subcredential. */
   hs_get_subcredential(&service->keys.identity_pk, &desc->blinded_kp.pubkey,
-                       desc->desc->subcredential);
+                       &desc->desc->subcredential);
 
   plaintext = &desc->desc->plaintext_data;
 
@@ -1852,7 +1877,7 @@ generate_ope_cipher_for_desc(const hs_service_descriptor_t *hs_desc)
   return crypto_ope_new(key);
 }
 
-/* For the given service and descriptor object, create the key material which
+/** For the given service and descriptor object, create the key material which
  * is the blinded keypair, the descriptor signing keypair, the ephemeral
  * keypair, and the descriptor cookie. Return 0 on success else -1 on error
  * where the generated keys MUST be ignored. */
@@ -1914,7 +1939,7 @@ build_service_desc_keys(const hs_service_t *service,
   return ret;
 }
 
-/* Given a service and the current time, build a descriptor for the service.
+/** Given a service and the current time, build a descriptor for the service.
  * This function does not pick introduction point, this needs to be done by
  * the update function. On success, desc_out will point to the newly allocated
  * descriptor object.
@@ -1962,16 +1987,22 @@ build_service_descriptor(hs_service_t *service, uint64_t time_period_num,
 
   /* Assign newly built descriptor to the next slot. */
   *desc_out = desc;
+
   /* Fire a CREATED control port event. */
   hs_control_desc_event_created(service->onion_address,
                                 &desc->blinded_kp.pubkey);
+
+  /* If we are an onionbalance instance, we refresh our keys when we rotate
+   * descriptors. */
+  hs_ob_refresh_keys(service);
+
   return;
 
  err:
   service_descriptor_free(desc);
 }
 
-/* Build both descriptors for the given service that has just booted up.
+/** Build both descriptors for the given service that has just booted up.
  * Because it's a special case, it deserves its special function ;). */
 static void
 build_descriptors_for_new_service(hs_service_t *service, time_t now)
@@ -2021,7 +2052,7 @@ build_descriptors_for_new_service(hs_service_t *service, time_t now)
            safe_str_client(service->onion_address));
 }
 
-/* Build descriptors for each service if needed. There are conditions to build
+/** Build descriptors for each service if needed. There are conditions to build
  * a descriptor which are details in the function. */
 STATIC void
 build_all_descriptors(time_t now)
@@ -2054,7 +2085,7 @@ build_all_descriptors(time_t now)
   } FOR_EACH_DESCRIPTOR_END;
 }
 
-/* Randomly pick a node to become an introduction point but not present in the
+/** Randomly pick a node to become an introduction point but not present in the
  * given exclude_nodes list. The chosen node is put in the exclude list
  * regardless of success or not because in case of failure, the node is simply
  * unsusable from that point on.
@@ -2071,6 +2102,7 @@ build_all_descriptors(time_t now)
 static hs_service_intro_point_t *
 pick_intro_point(unsigned int direct_conn, smartlist_t *exclude_nodes)
 {
+  const or_options_t *options = get_options();
   const node_t *node;
   hs_service_intro_point_t *ip = NULL;
   /* Normal 3-hop introduction point flags. */
@@ -2078,11 +2110,19 @@ pick_intro_point(unsigned int direct_conn, smartlist_t *exclude_nodes)
   /* Single onion flags. */
   router_crn_flags_t direct_flags = flags | CRN_PREF_ADDR | CRN_DIRECT_CONN;
 
-  node = router_choose_random_node(exclude_nodes, get_options()->ExcludeNodes,
+  node = router_choose_random_node(exclude_nodes, options->ExcludeNodes,
                                    direct_conn ? direct_flags : flags);
-  /* Unable to find a node. When looking for a node for a direct connection,
-   * we could try a 3-hop path instead. We'll add support for this in a later
-   * release. */
+
+  /* If we are in single onion mode, retry node selection for a 3-hop
+   * path */
+  if (direct_conn && !node) {
+    log_info(LD_REND,
+             "Unable to find an intro point that we can connect to "
+             "directly, falling back to a 3-hop path.");
+    node = router_choose_random_node(exclude_nodes, options->ExcludeNodes,
+                                     flags);
+  }
+
   if (!node) {
     goto err;
   }
@@ -2106,7 +2146,7 @@ pick_intro_point(unsigned int direct_conn, smartlist_t *exclude_nodes)
   return NULL;
 }
 
-/* For a given descriptor from the given service, pick any needed intro points
+/** For a given descriptor from the given service, pick any needed intro points
  * and update the current map with those newly picked intro points. Return the
  * number node that might have been added to the descriptor current map. */
 static unsigned int
@@ -2230,7 +2270,7 @@ service_desc_schedule_upload(hs_service_descriptor_t *desc,
   }
 }
 
-/* Pick missing intro points for this descriptor if needed. */
+/** Pick missing intro points for this descriptor if needed. */
 static void
 update_service_descriptor_intro_points(hs_service_t *service,
                           hs_service_descriptor_t *desc, time_t now)
@@ -2271,7 +2311,7 @@ update_service_descriptor_intro_points(hs_service_t *service,
   }
 }
 
-/* Update descriptor intro points for each service if needed. We do this as
+/** Update descriptor intro points for each service if needed. We do this as
  * part of the periodic event because we need to establish intro point circuits
  * before we publish descriptors. */
 STATIC void
@@ -2286,7 +2326,7 @@ update_all_descriptors_intro_points(time_t now)
   } FOR_EACH_SERVICE_END;
 }
 
-/* Return true iff the given intro point has expired that is it has been used
+/** Return true iff the given intro point has expired that is it has been used
  * for too long or we've reached our max seen INTRODUCE2 cell. */
 STATIC int
 intro_point_should_expire(const hs_service_intro_point_t *ip,
@@ -2308,15 +2348,66 @@ intro_point_should_expire(const hs_service_intro_point_t *ip,
   return 1;
 }
 
-/* Go over the given set of intro points for each service and remove any
- * invalid ones. The conditions for removal are:
+/** Return true iff we should remove the intro point ip from its service.
  *
- *    - The node doesn't exists anymore (not in consensus)
- *                          OR
- *    - The intro point maximum circuit retry count has been reached and no
- *      circuit can be found associated with it.
- *                          OR
- *    - The intro point has expired and we should pick a new one.
+ * We remove an intro point from the service descriptor list if one of
+ * these criteria is met:
+ *    - It has expired (either in INTRO2 count or in time).
+ *    - No node was found (fell off the consensus).
+ *    - We are over the maximum amount of retries.
+ *
+ * If an established or pending circuit is found for the given ip object, this
+ * return false indicating it should not be removed. */
+static bool
+should_remove_intro_point(hs_service_intro_point_t *ip, time_t now)
+{
+  bool ret = false;
+
+  tor_assert(ip);
+
+  /* Any one of the following needs to be True to furfill the criteria to
+   * remove an intro point. */
+  bool has_no_retries = (ip->circuit_retries >
+                         MAX_INTRO_POINT_CIRCUIT_RETRIES);
+  bool has_no_node = (get_node_from_intro_point(ip) == NULL);
+  bool has_expired = intro_point_should_expire(ip, now);
+
+  /* If the node fell off the consensus or the IP has expired, we have to
+   * remove it now. */
+  if (has_no_node || has_expired) {
+    ret = true;
+    goto end;
+  }
+
+  /* Pass this point, even though we might be over the retry limit, we check
+   * if a circuit (established or pending) exists. In that case, we should not
+   * remove it because it might simply be valid and opened at the previous
+   * scheduled event for the last retry. */
+
+  /* Do we simply have an existing circuit regardless of its state? */
+  if (hs_circ_service_get_intro_circ(ip)) {
+    goto end;
+  }
+
+  /* Getting here means we have _no_ circuits so then return if we have any
+   * remaining retries. */
+  ret = has_no_retries;
+
+ end:
+  /* Meaningful log in case we are about to remove the IP. */
+  if (ret) {
+    log_info(LD_REND, "Intro point %s%s (retried: %u times). "
+                      "Removing it.",
+             describe_intro_point(ip),
+             has_expired ? " has expired" :
+               (has_no_node) ?  " fell off the consensus" : "",
+             ip->circuit_retries);
+  }
+  return ret;
+}
+
+/** Go over the given set of intro points for each service and remove any
+ * invalid ones.
  *
  * If an intro point is removed, the circuit (if any) is immediately close.
  * If a circuit can't be found, the intro point is kept if it hasn't reached
@@ -2325,12 +2416,10 @@ static void
 cleanup_intro_points(hs_service_t *service, time_t now)
 {
   /* List of intro points to close. We can't mark the intro circuits for close
-   * in the modify loop because doing so calls
-   * hs_service_intro_circ_has_closed() which does a digest256map_get() on the
-   * intro points map (that we are iterating over). This can't be done in a
-   * single iteration after a MAP_DEL_CURRENT, the object will still be
-   * returned leading to a use-after-free. So, we close the circuits and free
-   * the intro points after the loop if any. */
+   * in the modify loop because doing so calls back into the HS subsystem and
+   * we need to keep that code path outside of the service/desc loop so those
+   * maps don't get modified during the close making us in a possible
+   * use-after-free situation. */
   smartlist_t *ips_to_free = smartlist_new();
 
   tor_assert(service);
@@ -2341,21 +2430,7 @@ cleanup_intro_points(hs_service_t *service, time_t now)
      * valid and remove any of them that aren't. */
     DIGEST256MAP_FOREACH_MODIFY(desc->intro_points.map, key,
                                 hs_service_intro_point_t *, ip) {
-      const node_t *node = get_node_from_intro_point(ip);
-      int has_expired = intro_point_should_expire(ip, now);
-
-      /* We cleanup an intro point if it has expired or if we do not know the
-       * node_t anymore (removed from our latest consensus) or if we've
-       * reached the maximum number of retry with a non existing circuit. */
-      if (has_expired || node == NULL ||
-          ip->circuit_retries > MAX_INTRO_POINT_CIRCUIT_RETRIES) {
-        log_info(LD_REND, "Intro point %s%s (retried: %u times). "
-                          "Removing it.",
-                 describe_intro_point(ip),
-                 has_expired ? " has expired" :
-                    (node == NULL) ?  " fell off the consensus" : "",
-                 ip->circuit_retries);
-
+      if (should_remove_intro_point(ip, now)) {
         /* We've retried too many times, remember it as a failed intro point
          * so we don't pick it up again for INTRO_CIRC_RETRY_PERIOD sec. */
         if (ip->circuit_retries > MAX_INTRO_POINT_CIRCUIT_RETRIES) {
@@ -2392,7 +2467,7 @@ cleanup_intro_points(hs_service_t *service, time_t now)
   smartlist_free(ips_to_free);
 }
 
-/* Set the next rotation time of the descriptors for the given service for the
+/** Set the next rotation time of the descriptors for the given service for the
  * time now. */
 static void
 set_rotation_time(hs_service_t *service)
@@ -2411,7 +2486,7 @@ set_rotation_time(hs_service_t *service)
   }
 }
 
-/* Return true iff the service should rotate its descriptor. The time now is
+/** Return true iff the service should rotate its descriptor. The time now is
  * only used to fetch the live consensus and if none can be found, this
  * returns false. */
 static unsigned int
@@ -2463,7 +2538,7 @@ should_rotate_descriptors(hs_service_t *service, time_t now)
   return 1;
 }
 
-/* Rotate the service descriptors of the given service. The current descriptor
+/** Rotate the service descriptors of the given service. The current descriptor
  * will be freed, the next one put in as the current and finally the next
  * descriptor pointer is NULLified. */
 static void
@@ -2485,7 +2560,7 @@ rotate_service_descriptors(hs_service_t *service)
   set_rotation_time(service);
 }
 
-/* Rotate descriptors for each service if needed. A non existing current
+/** Rotate descriptors for each service if needed. A non existing current
  * descriptor will trigger a descriptor build for the next time period. */
 STATIC void
 rotate_all_descriptors(time_t now)
@@ -2514,7 +2589,7 @@ rotate_all_descriptors(time_t now)
   } FOR_EACH_SERVICE_END;
 }
 
-/* Scheduled event run from the main loop. Make sure all our services are up
+/** Scheduled event run from the main loop. Make sure all our services are up
  * to date and ready for the other scheduled events. This includes looking at
  * the introduction points status and descriptor rotation time. */
 STATIC void
@@ -2549,7 +2624,7 @@ run_housekeeping_event(time_t now)
   } FOR_EACH_SERVICE_END;
 }
 
-/* Scheduled event run from the main loop. Make sure all descriptors are up to
+/** Scheduled event run from the main loop. Make sure all descriptors are up to
  * date. Once this returns, each service descriptor needs to be considered for
  * new introduction circuits and then for upload. */
 static void
@@ -2572,7 +2647,7 @@ run_build_descriptor_event(time_t now)
   update_all_descriptors_intro_points(now);
 }
 
-/* For the given service, launch any intro point circuits that could be
+/** For the given service, launch any intro point circuits that could be
  * needed. This considers every descriptor of the service. */
 static void
 launch_intro_point_circuits(hs_service_t *service)
@@ -2583,7 +2658,7 @@ launch_intro_point_circuits(hs_service_t *service)
    * circuits using the current map. */
   FOR_EACH_DESCRIPTOR_BEGIN(service, desc) {
     /* Keep a ref on if we need a direct connection. We use this often. */
-    unsigned int direct_conn = service->config.is_single_onion;
+    bool direct_conn = service->config.is_single_onion;
 
     DIGEST256MAP_FOREACH_MODIFY(desc->intro_points.map, key,
                                 hs_service_intro_point_t *, ip) {
@@ -2594,8 +2669,15 @@ launch_intro_point_circuits(hs_service_t *service)
       if (hs_circ_service_get_intro_circ(ip)) {
         continue;
       }
-
       ei = get_extend_info_from_intro_point(ip, direct_conn);
+
+      /* If we can't connect directly to the intro point, get an extend_info
+       * for a multi-hop path instead. */
+      if (ei == NULL && direct_conn) {
+        direct_conn = false;
+        ei = get_extend_info_from_intro_point(ip, 0);
+      }
+
       if (ei == NULL) {
         /* This is possible if we can get a node_t but not the extend info out
          * of it. In this case, we remove the intro point and a new one will
@@ -2607,7 +2689,7 @@ launch_intro_point_circuits(hs_service_t *service)
 
       /* Launch a circuit to the intro point. */
       ip->circuit_retries++;
-      if (hs_circ_launch_intro_point(service, ip, ei) < 0) {
+      if (hs_circ_launch_intro_point(service, ip, ei, direct_conn) < 0) {
         log_info(LD_REND, "Unable to launch intro circuit to node %s "
                           "for service %s.",
                  safe_str_client(extend_info_describe(ei)),
@@ -2619,7 +2701,7 @@ launch_intro_point_circuits(hs_service_t *service)
   } FOR_EACH_DESCRIPTOR_END;
 }
 
-/* Don't try to build more than this many circuits before giving up for a
+/** Don't try to build more than this many circuits before giving up for a
  * while. Dynamically calculated based on the configured number of intro
  * points for the given service and how many descriptor exists. The default
  * use case of 3 introduction points and two descriptors will allow 28
@@ -2635,7 +2717,7 @@ get_max_intro_circ_per_period(const hs_service_t *service)
   tor_assert(service->config.num_intro_points <=
              HS_CONFIG_V3_MAX_INTRO_POINTS);
 
-/* For a testing network, allow to do it for the maximum amount so circuit
+/** For a testing network, allow to do it for the maximum amount so circuit
  * creation and rotation and so on can actually be tested without limit. */
 #define MAX_INTRO_POINT_CIRCUIT_RETRIES_TESTING -1
   if (get_options()->TestingTorNetwork) {
@@ -2664,7 +2746,7 @@ get_max_intro_circ_per_period(const hs_service_t *service)
   return (count * multiplier);
 }
 
-/* For the given service, return 1 if the service is allowed to launch more
+/** For the given service, return 1 if the service is allowed to launch more
  * introduction circuits else 0 if the maximum has been reached for the retry
  * period of INTRO_CIRC_RETRY_PERIOD. */
 STATIC int
@@ -2710,7 +2792,7 @@ can_service_launch_intro_circuit(hs_service_t *service, time_t now)
   return 1;
 }
 
-/* Scheduled event run from the main loop. Make sure we have all the circuits
+/** Scheduled event run from the main loop. Make sure we have all the circuits
  * we need for each service. */
 static void
 run_build_circuit_event(time_t now)
@@ -2740,7 +2822,7 @@ run_build_circuit_event(time_t now)
   } FOR_EACH_SERVICE_END;
 }
 
-/* Encode and sign the service descriptor desc and upload it to the given
+/** Encode and sign the service descriptor desc and upload it to the given
  * hidden service directory.  This does nothing if PublishHidServDescriptors
  * is false. */
 static void
@@ -2876,7 +2958,7 @@ set_descriptor_revision_counter(hs_service_descriptor_t *hs_desc, time_t now,
   hs_desc->desc->plaintext_data.revision_counter = rev_counter;
 }
 
-/* Encode and sign the service descriptor desc and upload it to the
+/** Encode and sign the service descriptor desc and upload it to the
  * responsible hidden service directories. If for_next_period is true, the set
  * of directories are selected using the next hsdir_index. This does nothing
  * if PublishHidServDescriptors is false. */
@@ -2973,13 +3055,85 @@ service_desc_hsdirs_changed(const hs_service_t *service,
   return should_reupload;
 }
 
-/* Return 1 if the given descriptor from the given service can be uploaded
+/** These are all the reasons why a descriptor upload can't occur. We use
+ * those to log the reason properly with the right rate limiting and for the
+ * right descriptor. */
+typedef enum {
+  LOG_DESC_UPLOAD_REASON_MISSING_IPS = 0,
+  LOG_DESC_UPLOAD_REASON_IP_NOT_ESTABLISHED = 1,
+  LOG_DESC_UPLOAD_REASON_NOT_TIME = 2,
+  LOG_DESC_UPLOAD_REASON_NO_LIVE_CONSENSUS = 3,
+  LOG_DESC_UPLOAD_REASON_NO_DIRINFO = 4,
+} log_desc_upload_reason_t;
+
+/** Maximum number of reasons. This is used to allocate the static array of
+ * all rate limiting objects. */
+#define LOG_DESC_UPLOAD_REASON_MAX LOG_DESC_UPLOAD_REASON_NO_DIRINFO
+
+/** Log the reason why we can't upload the given descriptor for the given
+ * service. This takes a message string (allocated by the caller) and a
+ * reason.
+ *
+ * Depending on the reason and descriptor, different rate limit applies. This
+ * is done because this function will basically be called every second. Each
+ * descriptor for each reason uses its own log rate limit object in order to
+ * avoid message suppression for different reasons and descriptors. */
+static void
+log_cant_upload_desc(const hs_service_t *service,
+                     const hs_service_descriptor_t *desc, const char *msg,
+                     const log_desc_upload_reason_t reason)
+{
+  /* Writing the log every minute shouldn't be too annoying for log rate limit
+   * since this can be emitted every second for each descriptor.
+   *
+   * However, for one specific case, we increase it to 10 minutes because it
+   * is hit constantly, as an expected behavior, which is the reason
+   * indicating that it is not the time to upload. */
+  static ratelim_t limits[2][LOG_DESC_UPLOAD_REASON_MAX + 1] =
+    { { RATELIM_INIT(60), RATELIM_INIT(60), RATELIM_INIT(60 * 10),
+        RATELIM_INIT(60), RATELIM_INIT(60) },
+      { RATELIM_INIT(60), RATELIM_INIT(60), RATELIM_INIT(60 * 10),
+        RATELIM_INIT(60), RATELIM_INIT(60) },
+    };
+  bool is_next_desc = false;
+  unsigned int rlim_pos = 0;
+  ratelim_t *rlim = NULL;
+
+  tor_assert(service);
+  tor_assert(desc);
+  tor_assert(msg);
+
+  /* Make sure the reason value is valid. It should never happen because we
+   * control that value in the code flow but will be apparent during
+   * development if a reason is added but LOG_DESC_UPLOAD_REASON_NUM_ is not
+   * updated. */
+  if (BUG(reason > LOG_DESC_UPLOAD_REASON_MAX || reason < 0)) {
+    return;
+  }
+
+  /* Ease our life. Flag that tells us if the descriptor is the next one. */
+  is_next_desc = (service->desc_next == desc);
+
+  /* Current descriptor is the first element in the ratelimit object array.
+   * The next descriptor is the second element. */
+  rlim_pos = (is_next_desc ? 1 : 0);
+  /* Get the ratelimit object for the reason _and_ right descriptor. */
+  rlim = &limits[rlim_pos][reason];
+
+  log_fn_ratelim(rlim, LOG_INFO, LD_REND,
+                 "Service %s can't upload its %s descriptor: %s",
+                 safe_str_client(service->onion_address),
+                 (is_next_desc) ? "next" : "current", msg);
+}
+
+/** Return 1 if the given descriptor from the given service can be uploaded
  * else return 0 if it can not. */
 static int
 should_service_upload_descriptor(const hs_service_t *service,
                               const hs_service_descriptor_t *desc, time_t now)
 {
-  unsigned int num_intro_points;
+  char *msg = NULL;
+  unsigned int num_intro_points, count_ip_established;
 
   tor_assert(service);
   tor_assert(desc);
@@ -2999,38 +3153,58 @@ should_service_upload_descriptor(const hs_service_t *service,
    * upload descriptor in this case. We need at least one for the service to
    * be reachable. */
   if (desc->missing_intro_points && num_intro_points == 0) {
+    msg = tor_strdup("Missing intro points");
+    log_cant_upload_desc(service, desc, msg,
+                         LOG_DESC_UPLOAD_REASON_MISSING_IPS);
     goto cannot;
   }
 
   /* Check if all our introduction circuit have been established for all the
    * intro points we have selected. */
-  if (count_desc_circuit_established(desc) != num_intro_points) {
+  count_ip_established = count_desc_circuit_established(desc);
+  if (count_ip_established != num_intro_points) {
+    tor_asprintf(&msg, "Intro circuits aren't yet all established (%d/%d).",
+                 count_ip_established, num_intro_points);
+    log_cant_upload_desc(service, desc, msg,
+                         LOG_DESC_UPLOAD_REASON_IP_NOT_ESTABLISHED);
     goto cannot;
   }
 
   /* Is it the right time to upload? */
   if (desc->next_upload_time > now) {
+    tor_asprintf(&msg, "Next upload time is %ld, it is now %ld.",
+                 (long int) desc->next_upload_time, (long int) now);
+    log_cant_upload_desc(service, desc, msg,
+                         LOG_DESC_UPLOAD_REASON_NOT_TIME);
     goto cannot;
   }
 
   /* Don't upload desc if we don't have a live consensus */
   if (!networkstatus_get_live_consensus(now)) {
+    msg = tor_strdup("No live consensus");
+    log_cant_upload_desc(service, desc, msg,
+                         LOG_DESC_UPLOAD_REASON_NO_LIVE_CONSENSUS);
     goto cannot;
   }
 
   /* Do we know enough router descriptors to have adequate vision of the HSDir
      hash ring? */
   if (!router_have_minimum_dir_info()) {
+    msg = tor_strdup("Not enough directory information");
+    log_cant_upload_desc(service, desc, msg,
+                         LOG_DESC_UPLOAD_REASON_NO_DIRINFO);
     goto cannot;
   }
 
   /* Can upload! */
   return 1;
+
  cannot:
+  tor_free(msg);
   return 0;
 }
 
-/* Refresh the given service descriptor meaning this will update every mutable
+/** Refresh the given service descriptor meaning this will update every mutable
  * field that needs to be updated before we upload.
  *
  * This should ONLY be called before uploading a descriptor. It assumes that
@@ -3061,7 +3235,7 @@ refresh_service_descriptor(const hs_service_t *service,
   set_descriptor_revision_counter(desc, now, service->desc_current == desc);
 }
 
-/* Scheduled event run from the main loop. Try to upload the descriptor for
+/** Scheduled event run from the main loop. Try to upload the descriptor for
  * each service. */
 STATIC void
 run_upload_descriptor_event(time_t now)
@@ -3110,7 +3284,7 @@ run_upload_descriptor_event(time_t now)
   consider_republishing_hs_descriptors = 0;
 }
 
-/* Called when the introduction point circuit is done building and ready to be
+/** Called when the introduction point circuit is done building and ready to be
  * used. */
 static void
 service_intro_circ_has_opened(origin_circuit_t *circ)
@@ -3168,7 +3342,7 @@ service_intro_circ_has_opened(origin_circuit_t *circ)
   return;
 }
 
-/* Called when a rendezvous circuit is done building and ready to be used. */
+/** Called when a rendezvous circuit is done building and ready to be used. */
 static void
 service_rendezvous_circ_has_opened(origin_circuit_t *circ)
 {
@@ -3209,7 +3383,7 @@ service_rendezvous_circ_has_opened(origin_circuit_t *circ)
   return;
 }
 
-/* We've been expecting an INTRO_ESTABLISHED cell on this circuit and it just
+/** We've been expecting an INTRO_ESTABLISHED cell on this circuit and it just
  * arrived. Handle the INTRO_ESTABLISHED cell arriving on the given
  * introduction circuit. Return 0 on success else a negative value. */
 static int
@@ -3252,11 +3426,6 @@ service_handle_intro_established(origin_circuit_t *circ,
     goto err;
   }
 
-  /* Flag that we have an established circuit for this intro point. This value
-   * is what indicates the upload scheduled event if we are ready to build the
-   * intro point into the descriptor and upload. */
-  ip->circuit_established = 1;
-
   log_info(LD_REND, "Successfully received an INTRO_ESTABLISHED cell "
                     "on circuit %u for service %s",
            TO_CIRCUIT(circ)->n_circ_id,
@@ -3267,7 +3436,7 @@ service_handle_intro_established(origin_circuit_t *circ,
   return -1;
 }
 
-/* We just received an INTRODUCE2 cell on the established introduction circuit
+/** We just received an INTRODUCE2 cell on the established introduction circuit
  * circ. Handle the cell and return 0 on success else a negative value. */
 static int
 service_handle_introduce2(origin_circuit_t *circ, const uint8_t *payload,
@@ -3305,7 +3474,7 @@ service_handle_introduce2(origin_circuit_t *circ, const uint8_t *payload,
 
   /* The following will parse, decode and launch the rendezvous point circuit.
    * Both current and legacy cells are handled. */
-  if (hs_circ_handle_introduce2(service, circ, ip, desc->desc->subcredential,
+  if (hs_circ_handle_introduce2(service, circ, ip, &desc->desc->subcredential,
                                 payload, payload_len) < 0) {
     goto err;
   }
@@ -3315,7 +3484,7 @@ service_handle_introduce2(origin_circuit_t *circ, const uint8_t *payload,
   return -1;
 }
 
-/* Add to list every filename used by service. This is used by the sandbox
+/** Add to list every filename used by service. This is used by the sandbox
  * subsystem. */
 static void
 service_add_fnames_to_list(const hs_service_t *service, smartlist_t *list)
@@ -3337,7 +3506,7 @@ service_add_fnames_to_list(const hs_service_t *service, smartlist_t *list)
   smartlist_add(list, hs_path_from_filename(s_dir, fname));
 }
 
-/* Return true iff the given service identity key is present on disk. */
+/** Return true iff the given service identity key is present on disk. */
 static int
 service_key_on_disk(const char *directory_path)
 {
@@ -3361,7 +3530,7 @@ service_key_on_disk(const char *directory_path)
   return ret;
 }
 
-/* This is a proxy function before actually calling hs_desc_encode_descriptor
+/** This is a proxy function before actually calling hs_desc_encode_descriptor
  * because we need some preprocessing here */
 static int
 service_encode_descriptor(const hs_service_t *service,
@@ -3392,7 +3561,7 @@ service_encode_descriptor(const hs_service_t *service,
 /* Public API */
 /* ========== */
 
-/* This is called everytime the service map (v2 or v3) changes that is if an
+/** This is called everytime the service map (v2 or v3) changes that is if an
  * element is added or removed. */
 void
 hs_service_map_has_changed(void)
@@ -3403,7 +3572,7 @@ hs_service_map_has_changed(void)
   rescan_periodic_events(get_options());
 }
 
-/* Upload an encoded descriptor in encoded_desc of the given version. This
+/** Upload an encoded descriptor in encoded_desc of the given version. This
  * descriptor is for the service identity_pk and blinded_pk used to setup the
  * directory connection identifier. It is uploaded to the directory hsdir_rs
  * routerstatus_t object.
@@ -3451,7 +3620,7 @@ hs_service_upload_desc_to_dir(const char *encoded_desc,
   directory_request_free(dir_req);
 }
 
-/* Add the ephemeral service using the secret key sk and ports. Both max
+/** Add the ephemeral service using the secret key sk and ports. Both max
  * streams parameter will be set in the newly created service.
  *
  * Ownership of sk and ports is passed to this routine.  Regardless of
@@ -3531,7 +3700,7 @@ hs_service_add_ephemeral(ed25519_secret_key_t *sk, smartlist_t *ports,
   return ret;
 }
 
-/* For the given onion address, delete the ephemeral service. Return 0 on
+/** For the given onion address, delete the ephemeral service. Return 0 on
  * success else -1 on error. */
 int
 hs_service_del_ephemeral(const char *address)
@@ -3581,7 +3750,7 @@ hs_service_del_ephemeral(const char *address)
   return -1;
 }
 
-/* Using the ed25519 public key pk, find a service for that key and return the
+/** Using the ed25519 public key pk, find a service for that key and return the
  * current encoded descriptor as a newly allocated string or NULL if not
  * found. This is used by the control port subsystem. */
 char *
@@ -3607,7 +3776,7 @@ hs_service_lookup_current_desc(const ed25519_public_key_t *pk)
   return NULL;
 }
 
-/* Return the number of service we have configured and usable. */
+/** Return the number of service we have configured and usable. */
 MOCK_IMPL(unsigned int,
 hs_service_get_num_services,(void))
 {
@@ -3617,49 +3786,7 @@ hs_service_get_num_services,(void))
   return HT_SIZE(hs_service_map);
 }
 
-/* Called once an introduction circuit is closed. If the circuit doesn't have
- * a v3 identifier, it is ignored. */
-void
-hs_service_intro_circ_has_closed(origin_circuit_t *circ)
-{
-  hs_service_t *service = NULL;
-  hs_service_intro_point_t *ip = NULL;
-  hs_service_descriptor_t *desc = NULL;
-
-  tor_assert(circ);
-
-  if (circ->hs_ident == NULL) {
-    /* This is not a v3 circuit, ignore. */
-    goto end;
-  }
-
-  get_objects_from_ident(circ->hs_ident, &service, &ip, &desc);
-  if (service == NULL) {
-    /* This is possible if the circuits are closed and the service is
-     * immediately deleted. */
-    log_info(LD_REND, "Unable to find any hidden service associated "
-                      "identity key %s on intro circuit %u.",
-             ed25519_fmt(&circ->hs_ident->identity_pk),
-             TO_CIRCUIT(circ)->n_circ_id);
-    goto end;
-  }
-  if (ip == NULL) {
-    /* The introduction point object has already been removed probably by our
-     * cleanup process so ignore. */
-    goto end;
-  }
-  /* Can't have an intro point object without a descriptor. */
-  tor_assert(desc);
-
-  /* Circuit disappeared so make sure the intro point is updated. By
-   * keeping the object in the descriptor, we'll be able to retry. */
-  ip->circuit_established = 0;
-
- end:
-  return;
-}
-
-/* Given conn, a rendezvous edge connection acting as an exit stream, look up
+/** Given conn, a rendezvous edge connection acting as an exit stream, look up
  * the hidden service for the circuit circ, and look up the port and address
  * based on the connection port. Assign the actual connection address.
  *
@@ -3757,7 +3884,7 @@ hs_service_exports_circuit_id(const ed25519_public_key_t *pk)
   return service->config.circuit_id_protocol;
 }
 
-/* Add to file_list every filename used by a configured hidden service, and to
+/** Add to file_list every filename used by a configured hidden service, and to
  * dir_list every directory path used by a configured hidden service. This is
  * used by the sandbox subsystem to whitelist those. */
 void
@@ -3782,7 +3909,7 @@ hs_service_lists_fnames_for_sandbox(smartlist_t *file_list,
   } FOR_EACH_DESCRIPTOR_END;
 }
 
-/* Called when our internal view of the directory has changed. We might have
+/** Called when our internal view of the directory has changed. We might have
  * received a new batch of descriptors which might affect the shape of the
  * HSDir hash ring. Signal that we should reexamine the hash ring and
  * re-upload our HS descriptors if needed. */
@@ -3799,7 +3926,7 @@ hs_service_dir_info_changed(void)
   }
 }
 
-/* Called when we get an INTRODUCE2 cell on the circ. Respond to the cell and
+/** Called when we get an INTRODUCE2 cell on the circ. Respond to the cell and
  * launch a circuit to the rendezvous point. */
 int
 hs_service_receive_introduce2(origin_circuit_t *circ, const uint8_t *payload,
@@ -3830,7 +3957,7 @@ hs_service_receive_introduce2(origin_circuit_t *circ, const uint8_t *payload,
   return ret;
 }
 
-/* Called when we get an INTRO_ESTABLISHED cell. Mark the circuit as an
+/** Called when we get an INTRO_ESTABLISHED cell. Mark the circuit as an
  * established introduction point. Return 0 on success else a negative value
  * and the circuit is closed. */
 int
@@ -3867,7 +3994,7 @@ hs_service_receive_intro_established(origin_circuit_t *circ,
   return -1;
 }
 
-/* Called when any kind of hidden service circuit is done building thus
+/** Called when any kind of hidden service circuit is done building thus
  * opened. This is the entry point from the circuit subsystem. */
 void
 hs_service_circuit_has_opened(origin_circuit_t *circ)
@@ -3896,7 +4023,7 @@ hs_service_circuit_has_opened(origin_circuit_t *circ)
   }
 }
 
-/* Return the service version by looking at the key in the service directory.
+/** Return the service version by looking at the key in the service directory.
  * If the key is not found or unrecognized, -1 is returned. Else, the service
  * version is returned. */
 int
@@ -3926,7 +4053,7 @@ hs_service_get_version_from_key(const hs_service_t *service)
   return version;
 }
 
-/* Load and/or generate keys for all onion services including the client
+/** Load and/or generate keys for all onion services including the client
  * authorization if any. Return 0 on success, -1 on failure. */
 int
 hs_service_load_all_keys(void)
@@ -3962,7 +4089,7 @@ hs_service_load_all_keys(void)
   return -1;
 }
 
-/* Put all service object in the given service list. After this, the caller
+/** Put all service object in the given service list. After this, the caller
  * looses ownership of every elements in the list and responsible to free the
  * list pointer. */
 void
@@ -3979,7 +4106,7 @@ hs_service_stage_services(const smartlist_t *service_list)
   smartlist_add_all(hs_service_staging_list, service_list);
 }
 
-/* Allocate and initilize a service object. The service configuration will
+/** Allocate and initilize a service object. The service configuration will
  * contain the default values. Return the newly allocated object pointer. This
  * function can't fail. */
 hs_service_t *
@@ -3997,7 +4124,7 @@ hs_service_new(const or_options_t *options)
   return service;
 }
 
-/* Free the given <b>service</b> object and all its content. This function
+/** Free the given <b>service</b> object and all its content. This function
  * also takes care of wiping service keys from memory. It is safe to pass a
  * NULL pointer. */
 void
@@ -4020,13 +4147,18 @@ hs_service_free_(hs_service_t *service)
     replaycache_free(service->state.replay_cache_rend_cookie);
   }
 
+  /* Free onionbalance subcredentials (if any) */
+  if (service->ob_subcreds) {
+    tor_free(service->ob_subcreds);
+  }
+
   /* Wipe service keys. */
   memwipe(&service->keys.identity_sk, 0, sizeof(service->keys.identity_sk));
 
   tor_free(service);
 }
 
-/* Periodic callback. Entry point from the main loop to the HS service
+/** Periodic callback. Entry point from the main loop to the HS service
  * subsystem. This is call every second. This is skipped if tor can't build a
  * circuit or the network is disabled. */
 void
@@ -4049,7 +4181,7 @@ hs_service_run_scheduled_events(time_t now)
   run_upload_descriptor_event(now);
 }
 
-/* Initialize the service HS subsystem. */
+/** Initialize the service HS subsystem. */
 void
 hs_service_init(void)
 {
@@ -4066,7 +4198,7 @@ hs_service_init(void)
   hs_service_staging_list = smartlist_new();
 }
 
-/* Release all global storage of the hidden service subsystem. */
+/** Release all global storage of the hidden service subsystem. */
 void
 hs_service_free_all(void)
 {
@@ -4076,14 +4208,14 @@ hs_service_free_all(void)
 
 #ifdef TOR_UNIT_TESTS
 
-/* Return the global service map size. Only used by unit test. */
+/** Return the global service map size. Only used by unit test. */
 STATIC unsigned int
 get_hs_service_map_size(void)
 {
   return HT_SIZE(hs_service_map);
 }
 
-/* Return the staging list size. Only used by unit test. */
+/** Return the staging list size. Only used by unit test. */
 STATIC int
 get_hs_service_staging_list_size(void)
 {

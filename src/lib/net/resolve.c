@@ -1,6 +1,6 @@
 /* Copyright (c) 2003-2004, Roger Dingledine
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -8,6 +8,7 @@
  * \brief Use the libc DNS resolver to convert hostnames into addresses.
  **/
 
+#define RESOLVE_PRIVATE
 #include "lib/net/resolve.h"
 
 #include "lib/net/address.h"
@@ -70,10 +71,10 @@ tor_lookup_hostname,(const char *name, uint32_t *addr))
  *
  * See tor_addr_lookup() for details.
  */
-static int
-tor_addr_lookup_host_getaddrinfo(const char *name,
-                                 uint16_t family,
-                                 tor_addr_t *addr)
+MOCK_IMPL(STATIC int,
+tor_addr_lookup_host_impl,(const char *name,
+                          uint16_t family,
+                          tor_addr_t *addr))
 {
   int err;
   struct addrinfo *res=NULL, *res_p;
@@ -118,17 +119,19 @@ tor_addr_lookup_host_getaddrinfo(const char *name,
   return (err == EAI_AGAIN) ? 1 : -1;
 }
 
-#else /* !(defined(HAVE_GETADDRINFO)) */
+#else /* !defined(HAVE_GETADDRINFO) */
 
-/* Host lookup helper for tor_addr_lookup(), which calls getaddrinfo().
- * Used when gethostbyname() is not available on this system.
+/* Host lookup helper for tor_addr_lookup(), which calls gethostbyname().
+ * Used when getaddrinfo() is not available on this system.
  *
  * See tor_addr_lookup() for details.
  */
-static int
-tor_addr_lookup_host_gethostbyname(const char *name,
-                                   tor_addr_t *addr)
+MOCK_IMPL(STATIC int,
+tor_addr_lookup_host_impl,(const char *name,
+                          uint16_t family,
+                           tor_addr_t *addr))
 {
+  (void) family;
   struct hostent *ent;
   int err;
 #ifdef HAVE_GETHOSTBYNAME_R_6_ARG
@@ -170,7 +173,6 @@ tor_addr_lookup_host_gethostbyname(const char *name,
   return (err == TRY_AGAIN) ? 1 : -1;
 #endif
 }
-
 #endif /* defined(HAVE_GETADDRINFO) */
 
 /** Similar behavior to Unix gethostbyname: resolve <b>name</b>, and set
@@ -215,13 +217,8 @@ tor_addr_lookup,(const char *name, uint16_t family, tor_addr_t *addr))
   } else {
     /* Clear the address after a failed tor_addr_parse(). */
     memset(addr, 0, sizeof(tor_addr_t));
-#ifdef HAVE_GETADDRINFO
-    result = tor_addr_lookup_host_getaddrinfo(name, family, addr);
+    result = tor_addr_lookup_host_impl(name, family, addr);
     goto done;
-#else /* !(defined(HAVE_GETADDRINFO)) */
-    result = tor_addr_lookup_host_gethostbyname(name, addr);
-    goto done;
-#endif /* defined(HAVE_GETADDRINFO) */
   }
 
  /* If we weren't successful, and haven't already set the result,
@@ -375,11 +372,11 @@ static HT_HEAD(getaddrinfo_cache, cached_getaddrinfo_item_t)
 
 HT_PROTOTYPE(getaddrinfo_cache, cached_getaddrinfo_item_t, node,
              cached_getaddrinfo_item_hash,
-             cached_getaddrinfo_items_eq)
+             cached_getaddrinfo_items_eq);
 HT_GENERATE2(getaddrinfo_cache, cached_getaddrinfo_item_t, node,
              cached_getaddrinfo_item_hash,
              cached_getaddrinfo_items_eq,
-             0.6, tor_reallocarray_, tor_free_)
+             0.6, tor_reallocarray_, tor_free_);
 
 /** If true, don't try to cache getaddrinfo results. */
 static int sandbox_getaddrinfo_cache_disabled = 0;
@@ -506,7 +503,7 @@ tor_make_getaddrinfo_cache_active(void)
 {
   sandbox_getaddrinfo_is_active = 1;
 }
-#else /* !(defined(USE_SANDBOX_GETADDRINFO)) */
+#else /* !defined(USE_SANDBOX_GETADDRINFO) */
 void
 sandbox_disable_getaddrinfo_cache(void)
 {

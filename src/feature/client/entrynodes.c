@@ -1,7 +1,7 @@
 /* Copyright (c) 2001 Matej Pfajfar.
  * Copyright (c) 2001-2004, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 /**
@@ -114,7 +114,7 @@
 
 #include "core/or/or.h"
 #include "app/config/config.h"
-#include "app/config/confparse.h"
+#include "lib/confmgt/confmgt.h"
 #include "app/config/statefile.h"
 #include "core/mainloop/connection.h"
 #include "core/mainloop/mainloop.h"
@@ -1038,7 +1038,7 @@ get_max_sample_size(guard_selection_t *gs,
  * Return a smartlist of the all the guards that are not currently
  * members of the sample (GUARDS - SAMPLED_GUARDS).  The elements of
  * this list are node_t pointers in the non-bridge case, and
- * bridge_info_t pointers in the bridge case.  Set *<b>n_guards_out/b>
+ * bridge_info_t pointers in the bridge case.  Set *<b>n_guards_out</b>
  * to the number of guards that we found in GUARDS, including those
  * that were already sampled.
  */
@@ -1974,10 +1974,12 @@ get_retry_schedule(time_t failing_since, time_t now,
   const struct {
     time_t maximum; int primary_delay; int nonprimary_delay;
   } delays[] = {
+    // clang-format off
     { SIX_HOURS,    10*60,  1*60*60 },
     { FOUR_DAYS,    90*60,  4*60*60 },
     { SEVEN_DAYS, 4*60*60, 18*60*60 },
     { TIME_MAX,   9*60*60, 36*60*60 }
+    // clang-format on
   };
 
   unsigned i;
@@ -3765,7 +3767,8 @@ guard_selection_get_err_str_if_dir_info_missing(guard_selection_t *gs,
 
   /* otherwise return a helpful error string */
   tor_asprintf(&ret_str, "We're missing descriptors for %d/%d of our "
-               "primary entry guards (total %sdescriptors: %d/%d).",
+               "primary entry guards (total %sdescriptors: %d/%d). "
+               "That's ok. We will try to fetch missing descriptors soon.",
                n_missing_descriptors, num_primary_to_check,
                using_mds?"micro":"", num_present, num_usable);
 

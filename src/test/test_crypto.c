@@ -1,6 +1,6 @@
 /* Copyright (c) 2001-2004, Roger Dingledine.
  * Copyright (c) 2004-2006, Roger Dingledine, Nick Mathewson.
- * Copyright (c) 2007-2019, The Tor Project, Inc. */
+ * Copyright (c) 2007-2020, The Tor Project, Inc. */
 /* See LICENSE for licensing information */
 
 #include "orconfig.h"
@@ -29,9 +29,9 @@
 
 #if defined(ENABLE_OPENSSL)
 #include "lib/crypt_ops/compat_openssl.h"
-DISABLE_GCC_WARNING(redundant-decls)
+DISABLE_GCC_WARNING("-Wredundant-decls")
 #include <openssl/dh.h>
-ENABLE_GCC_WARNING(redundant-decls)
+ENABLE_GCC_WARNING("-Wredundant-decls")
 #endif /* defined(ENABLE_OPENSSL) */
 
 /** Run unit tests for Diffie-Hellman functionality. */
@@ -1923,7 +1923,7 @@ test_crypto_curve25519_impl(void *arg)
                                 "e0544770bc7de853b38f9100489e3e79";
   const char e1e2k_expected[] = "cd6e8269104eb5aaee886bd2071fba88"
                                 "bd13861475516bc2cd2b6e005e805064";
-#else /* !(defined(SLOW_CURVE25519_TEST)) */
+#else /* !defined(SLOW_CURVE25519_TEST) */
   const int loop_max=200;
   const char e1_expected[]    = "bc7112cde03f97ef7008cad1bdc56be3"
                                 "c6a1037d74cceb3712e9206871dcf654";
@@ -2971,6 +2971,7 @@ test_crypto_failure_modes(void *arg)
   ;
 }
 
+#ifndef COCCI
 #define CRYPTO_LEGACY(name)                                            \
   { #name, test_crypto_ ## name , 0, NULL, NULL }
 
@@ -2981,6 +2982,7 @@ test_crypto_failure_modes(void *arg)
 #define ED25519_TEST(name, fl)                  \
   ED25519_TEST_ONE(name, (fl), "donna"),        \
   ED25519_TEST_ONE(name, (fl), "ref10")
+#endif /* !defined(COCCI) */
 
 struct testcase_t crypto_tests[] = {
   CRYPTO_LEGACY(formats),

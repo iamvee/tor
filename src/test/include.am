@@ -23,7 +23,9 @@ TESTSCRIPTS = \
 	src/test/test_workqueue_pipe.sh \
 	src/test/test_workqueue_pipe2.sh \
 	src/test/test_workqueue_socketpair.sh \
-	src/test/test_switch_id.sh
+	src/test/test_switch_id.sh \
+	src/test/test_cmdline.sh \
+	src/test/test_parseconf.sh
 
 if USE_RUST
 TESTSCRIPTS += \
@@ -31,7 +33,11 @@ TESTSCRIPTS += \
 endif
 
 if USEPYTHON
-TESTSCRIPTS += src/test/test_ntor.sh src/test/test_hs_ntor.sh src/test/test_bt.sh
+TESTSCRIPTS += \
+	src/test/test_ntor.sh \
+	src/test/test_hs_ntor.sh \
+	src/test/test_bt.sh \
+	scripts/maint/practracker/test_practracker.sh
 
 if COVERAGE_ENABLED
 # ...
@@ -42,6 +48,11 @@ TESTSCRIPTS += src/test/test_rebind.sh
 endif
 endif
 
+if USE_PERL
+TESTSCRIPTS += \
+        scripts/maint/checkSpaceTest.sh
+endif
+
 TESTS += src/test/test src/test/test-slow src/test/test-memwipe \
 	src/test/test_workqueue \
 	src/test/test_keygen.sh \
@@ -50,13 +61,25 @@ TESTS += src/test/test src/test/test-slow src/test/test-memwipe \
 	$(TESTSCRIPTS)
 
 # These flavors are run using automake's test-driver and test-network.sh
-TEST_CHUTNEY_FLAVORS = basic-min bridges-min hs-v2-min hs-v3-min \
-	single-onion-v23
+
+# run a quick test or two
+# this test only uses IPv4
+TEST_CHUTNEY_FLAVOR_QUICK = bridges+hs-v23
 # only run if we can ping6 ::1 (localhost)
+TEST_CHUTNEY_FLAVOR_QUICK_IPV6 = single-onion-v23-ipv6-md
+
+# run a basic set of tests, which only use IPv4
+TEST_CHUTNEY_FLAVORS = basic-min bridges-min hs-v23-min single-onion-v23
+
+# only run if we can ping ::1 (localhost)
 TEST_CHUTNEY_FLAVORS_IPV6 = bridges+ipv6-min ipv6-exit-min hs-v23-ipv6-md \
 	single-onion-v23-ipv6-md
+
 # only run if we can find a stable (or simply another) version of tor
-TEST_CHUTNEY_FLAVORS_MIXED = mixed+hs-v2
+TEST_CHUTNEY_FLAVORS_MIXED = mixed+hs-v23
+
+# only run if IPv6 and mixed networks are run
+TEST_CHUTNEY_FLAVORS_IPV6_MIXED = mixed+hs-v23-ipv6
 
 ### This is a lovely feature, but it requires automake >= 1.12, and Tor
 ###  doesn't require that yet.
@@ -93,9 +116,12 @@ if UNITTESTS_ENABLED
 
 # ADD_C_FILE: INSERT SOURCES HERE.
 src_test_test_SOURCES += \
+	src/test/fakecircs.c \
 	src/test/log_test_helpers.c \
 	src/test/hs_test_helpers.c \
+	src/test/opts_test_helpers.c \
 	src/test/rend_test_helpers.c \
+	src/test/resolve_test_helpers.c \
 	src/test/rng_test_helpers.c \
 	src/test/test.c \
 	src/test/test_accounting.c \
@@ -115,11 +141,13 @@ src_test_test_SOURCES += \
 	src/test/test_checkdir.c \
 	src/test/test_circuitlist.c \
 	src/test/test_circuitmux.c \
+	src/test/test_circuitmux_ewma.c \
 	src/test/test_circuitbuild.c \
 	src/test/test_circuituse.c \
 	src/test/test_circuitstats.c \
 	src/test/test_compat_libevent.c \
 	src/test/test_config.c \
+	src/test/test_confmgr.c \
 	src/test/test_confparse.c \
 	src/test/test_connection.c \
 	src/test/test_conscache.c \
@@ -151,9 +179,11 @@ src_test_test_SOURCES += \
 	src/test/test_hs_client.c  \
 	src/test/test_hs_intropoint.c \
 	src/test/test_hs_control.c \
+	src/test/test_hs_ob.c \
 	src/test/test_handles.c \
 	src/test/test_hs_cache.c \
 	src/test/test_hs_descriptor.c \
+	src/test/test_hs_dos.c \
 	src/test/test_introduce.c \
 	src/test/test_keypin.c \
 	src/test/test_link_handshake.c \
@@ -166,12 +196,15 @@ src_test_test_SOURCES += \
 	src/test/test_oom.c \
 	src/test/test_oos.c \
 	src/test/test_options.c \
+	src/test/test_options_act.c \
 	src/test/test_pem.c \
 	src/test/test_periodic_event.c \
 	src/test/test_policy.c \
 	src/test/test_process.c \
+	src/test/test_process_descs.c \
 	src/test/test_prob_distr.c \
 	src/test/test_procmon.c \
+	src/test/test_proto_haproxy.c \
 	src/test/test_proto_http.c \
 	src/test/test_proto_misc.c \
 	src/test/test_protover.c \
@@ -191,6 +224,7 @@ src_test_test_SOURCES += \
 	src/test/test_sendme.c \
 	src/test/test_shared_random.c \
 	src/test/test_socks.c \
+	src/test/test_stats.c \
 	src/test/test_status.c \
 	src/test/test_storagedir.c \
 	src/test/test_threads.c \
@@ -329,9 +363,12 @@ src_test_test_timers_LDFLAGS = $(src_test_test_LDFLAGS)
 # ADD_C_FILE: INSERT HEADERS HERE.
 noinst_HEADERS+= \
 	src/test/fakechans.h \
+	src/test/fakecircs.h \
 	src/test/hs_test_helpers.h \
 	src/test/log_test_helpers.h \
+	src/test/opts_test_helpers.h \
 	src/test/rend_test_helpers.h \
+	src/test/resolve_test_helpers.h \
 	src/test/rng_test_helpers.h \
 	src/test/test.h \
 	src/test/ptr_helpers.h \
@@ -406,7 +443,9 @@ EXTRA_DIST += \
 	src/test/test_workqueue_efd2.sh \
 	src/test/test_workqueue_pipe.sh \
 	src/test/test_workqueue_pipe2.sh \
-	src/test/test_workqueue_socketpair.sh
+	src/test/test_workqueue_socketpair.sh \
+	src/test/test_cmdline.sh \
+	src/test/test_parseconf.sh
 
 test-rust:
 	$(TESTS_ENVIRONMENT) "$(abs_top_srcdir)/src/test/test_rust.sh"
